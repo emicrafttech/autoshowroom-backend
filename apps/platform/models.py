@@ -5,6 +5,9 @@ from django.db import models
 
 class PlatformRole(models.Model):
     name = models.CharField(max_length=120, unique=True)
+    description = models.TextField(blank=True)
+    color = models.CharField(max_length=24, default="#7aa2ff")
+    require_step_up = models.BooleanField(default=False)
     capabilities = models.JSONField(default=list, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 

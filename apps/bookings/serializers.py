@@ -80,9 +80,16 @@ class BookingSummarySerializer(serializers.Serializer):
 
 class AppointmentSerializer(serializers.ModelSerializer):
     bookingId = serializers.UUIDField(source="booking_id", required=False, allow_null=True)
+    buyerName = serializers.SerializerMethodField()
+    buyerPhone = serializers.SerializerMethodField()
     locationId = serializers.UUIDField(source="location_id", required=False, allow_null=True)
+    locationName = serializers.SerializerMethodField()
+    locationArea = serializers.SerializerMethodField()
     vehicleId = serializers.UUIDField(source="vehicle_id", required=False, allow_null=True)
+    vehicleTitle = serializers.SerializerMethodField()
+    conversationId = serializers.SerializerMethodField()
     scheduledAt = serializers.DateTimeField(source="scheduled_at")
+    status = serializers.SerializerMethodField()
     createdAt = serializers.DateTimeField(source="created_at", read_only=True)
     updatedAt = serializers.DateTimeField(source="updated_at", read_only=True)
 
@@ -91,16 +98,68 @@ class AppointmentSerializer(serializers.ModelSerializer):
         fields = [
             "id",
             "bookingId",
+            "buyerName",
+            "buyerPhone",
             "locationId",
+            "locationName",
+            "locationArea",
             "vehicleId",
+            "vehicleTitle",
+            "conversationId",
             "title",
             "scheduledAt",
+            "status",
             "notes",
             "createdAt",
             "updatedAt",
         ]
         read_only_fields = ["id", "createdAt", "updatedAt"]
         extra_kwargs = {"notes": {"required": False, "allow_null": True, "allow_blank": True}}
+
+    def get_buyerName(self, obj):
+        if obj.booking_id:
+            return obj.booking.buyer_name
+        return None
+
+    def get_buyerPhone(self, obj):
+        if obj.booking_id:
+            return obj.booking.buyer_phone
+        return None
+
+    def get_locationName(self, obj):
+        if obj.location_id:
+            return obj.location.name
+        return None
+
+    def get_locationArea(self, obj):
+        if obj.location_id:
+            return obj.location.area
+        return None
+
+    def get_vehicleTitle(self, obj):
+        if not obj.vehicle_id:
+            return None
+        return f"{obj.vehicle.year} {obj.vehicle.make} {obj.vehicle.model}"
+
+    def get_conversationId(self, obj):
+        if not obj.booking_id or not obj.vehicle_id:
+            return None
+        buyer_id = getattr(obj.booking, "buyer_id", None)
+        if not buyer_id:
+            return None
+        from apps.buyers.models import BuyerConversation
+
+        conversation = BuyerConversation.objects.filter(
+            buyer_id=buyer_id,
+            dealer_id=obj.dealer_id,
+            vehicle_id=obj.vehicle_id,
+        ).only("id").first()
+        return str(conversation.id) if conversation else None
+
+    def get_status(self, obj):
+        if obj.booking_id:
+            return obj.booking.status
+        return "confirmed"
 
     def validate(self, attrs):
         attrs = super().validate(attrs)

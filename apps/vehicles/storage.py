@@ -54,3 +54,27 @@ def create_presigned_upload(key: str, content_type: str) -> PresignedUpload:
         upload_url=upload_url,
         public_url=build_public_url(key),
     )
+
+
+def delete_media_objects(keys: list[str]) -> None:
+    if not keys:
+        return
+
+    client_kwargs = {
+        "region_name": settings.AWS_S3_REGION_NAME,
+        "aws_access_key_id": settings.AWS_ACCESS_KEY_ID,
+        "aws_secret_access_key": settings.AWS_SECRET_ACCESS_KEY,
+    }
+    if settings.AWS_S3_ENDPOINT_URL:
+        client_kwargs["endpoint_url"] = settings.AWS_S3_ENDPOINT_URL
+
+    client = boto3.client("s3", **client_kwargs)
+    for start in range(0, len(keys), 1000):
+        chunk = keys[start:start + 1000]
+        response = client.delete_objects(
+            Bucket=settings.AWS_STORAGE_BUCKET_NAME,
+            Delete={"Objects": [{"Key": key} for key in chunk], "Quiet": True},
+        )
+        if response.get("Errors"):
+            failed_keys = ", ".join(error.get("Key", "unknown") for error in response["Errors"])
+            raise RuntimeError(f"Unable to delete media objects from storage: {failed_keys}")

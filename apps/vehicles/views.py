@@ -13,29 +13,32 @@ from apps.common.permissions import (
 )
 from apps.common.views import EnvelopeMixin
 from apps.billing.limits import can_publish_listing, get_listing_limit
+from apps.platform.models import AuditLog
 
-from .models import Vehicle, VehicleMedia
+from .models import Vehicle, VehicleMedia, VehicleReviewIssue
 from .serializers import (
     VehicleMediaCompleteSerializer,
     VehicleMediaUploadSessionSerializer,
     VehicleReviewDecisionSerializer,
+    VehicleReviewIssueResolveSerializer,
+    VehicleReviewIssueSerializer,
     VehicleSerializer,
     VehicleStatusSerializer,
 )
-from .storage import build_media_key, create_presigned_upload
+from .storage import build_media_key, create_presigned_upload, delete_media_objects
 
 
 class VehicleViewSet(EnvelopeMixin, viewsets.ModelViewSet):
     serializer_class = VehicleSerializer
     permission_classes = [IsDealerStaffOrVehicleReviewer]
-    http_method_names = ["get", "post", "patch", "head", "options"]
+    http_method_names = ["get", "post", "patch", "delete", "head", "options"]
 
     def get_queryset(self):
         queryset = Vehicle.objects.select_related(
             "dealer",
             "location",
             "cover_media",
-        ).prefetch_related("media_items")
+        ).prefetch_related("media_items", "review_issues")
         user = self.request.user
 
         if not has_vehicle_review_permission(user):
@@ -84,6 +87,20 @@ class VehicleViewSet(EnvelopeMixin, viewsets.ModelViewSet):
                 raise PermissionDenied("You cannot update this listing.")
         serializer.save()
 
+    def perform_destroy(self, instance):
+        if instance.dealer_id != self.request.user.dealer_id:
+            raise PermissionDenied("Only the owning dealer can delete this listing.")
+        media_keys = list(
+            instance.media_items.exclude(s3_key="").values_list("s3_key", flat=True)
+        )
+        try:
+            delete_media_objects(media_keys)
+        except Exception as exc:
+            raise ValidationError(
+                "Unable to delete vehicle media from storage. Try again."
+            ) from exc
+        instance.delete()
+
     @action(detail=True, methods=["patch"], url_path="status")
     def status(self, request, pk=None):
         vehicle = self.get_object()
@@ -118,6 +135,10 @@ class VehicleViewSet(EnvelopeMixin, viewsets.ModelViewSet):
                 "updated_at",
             ]
         )
+        if vehicle.listing_verification_status == Vehicle.ListingVerificationStatus.PENDING_REVIEW:
+            from apps.notifications.platform_notifications import notify_listing_review_submitted
+
+            notify_listing_review_submitted(vehicle)
         return Response(VehicleSerializer(vehicle, context={"request": request}).data)
 
     @action(detail=True, methods=["post"], url_path="refresh")
@@ -196,6 +217,20 @@ class VehicleViewSet(EnvelopeMixin, viewsets.ModelViewSet):
             vehicle.cover_media = media
             vehicle.save(update_fields=["cover_media", "updated_at"])
 
+        if (
+            vehicle.listing_verification_status
+            == Vehicle.ListingVerificationStatus.REJECTED
+            and vehicle.review_issues.filter(
+                status=VehicleReviewIssue.Status.RESOLVED,
+            ).exists()
+        ):
+            vehicle.listing_verification_status = Vehicle.ListingVerificationStatus.PENDING_REVIEW
+            vehicle.feed_ready = False
+            vehicle.save(update_fields=["listing_verification_status", "feed_ready", "updated_at"])
+            from apps.notifications.platform_notifications import notify_listing_review_submitted
+
+            notify_listing_review_submitted(vehicle)
+
         vehicle = self.get_queryset().get(id=vehicle.id)
         return Response(VehicleSerializer(vehicle, context={"request": request}).data)
 
@@ -203,6 +238,8 @@ class VehicleViewSet(EnvelopeMixin, viewsets.ModelViewSet):
     def approve_review(self, request, pk=None):
         self.require_reviewer()
         vehicle = self.get_object()
+        if vehicle.review_issues.filter(status=VehicleReviewIssue.Status.OPEN).exists():
+            raise ValidationError("Resolve or dismiss open review issues before approving.")
         if (
             vehicle.listing_verification_status
             != Vehicle.ListingVerificationStatus.PENDING_REVIEW
@@ -216,6 +253,15 @@ class VehicleViewSet(EnvelopeMixin, viewsets.ModelViewSet):
         vehicle.feed_ready = vehicle.status == Vehicle.Status.AVAILABLE
         vehicle.published_at = now if vehicle.feed_ready else vehicle.published_at
         vehicle.save()
+        vehicle.review_issues.filter(
+            status=VehicleReviewIssue.Status.RESOLVED,
+        ).update(status=VehicleReviewIssue.Status.APPROVED, reviewed_at=now)
+        self.write_review_audit(
+            request.user,
+            "vehicle.review.approved",
+            vehicle,
+            {"feedReady": vehicle.feed_ready},
+        )
         return Response(VehicleSerializer(vehicle, context={"request": request}).data)
 
     @action(detail=True, methods=["patch"], url_path="review/reject")
@@ -225,13 +271,64 @@ class VehicleViewSet(EnvelopeMixin, viewsets.ModelViewSet):
         serializer = VehicleReviewDecisionSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         reason = serializer.validated_data.get("reason") or "Listing rejected"
+        issue_inputs = serializer.validated_data.get("issues") or [
+            {"category": VehicleReviewIssue.Category.OTHER, "message": reason}
+        ]
+        snapshot = self.build_review_snapshot(vehicle)
 
         vehicle.listing_verification_status = Vehicle.ListingVerificationStatus.REJECTED
         vehicle.listing_rejected_reason = reason
         vehicle.feed_ready = False
         vehicle.published_at = None
         vehicle.save()
+        for issue_input in issue_inputs:
+            issue = VehicleReviewIssue.objects.create(
+                vehicle=vehicle,
+                reviewer=request.user,
+                category=issue_input["category"],
+                message=issue_input["message"],
+                vehicle_snapshot=snapshot,
+            )
+            from apps.notifications.services import notify_review_issue
+
+            notify_review_issue(vehicle, issue)
+        self.write_review_audit(
+            request.user,
+            "vehicle.review.rejected",
+            vehicle,
+            {"reason": reason, "issueCount": len(issue_inputs)},
+        )
         return Response(VehicleSerializer(vehicle, context={"request": request}).data)
+
+    @action(detail=True, methods=["get"], url_path="review/issues")
+    def review_issues(self, request, pk=None):
+        vehicle = self.get_object()
+        issues = vehicle.review_issues.select_related("reviewer").all()
+        return Response(VehicleReviewIssueSerializer(issues, many=True, context={"request": request}).data)
+
+    @action(
+        detail=True,
+        methods=["patch"],
+        url_path=r"review/issues/(?P<issue_id>[^/.]+)/resolve",
+    )
+    def resolve_review_issue(self, request, pk=None, issue_id=None):
+        vehicle = self.get_object()
+        if vehicle.dealer_id != request.user.dealer_id:
+            raise PermissionDenied("Only the owning dealer can resolve review issues.")
+        issue = vehicle.review_issues.filter(id=issue_id).first()
+        if not issue:
+            raise ValidationError("Review issue not found for this listing.")
+        serializer = VehicleReviewIssueResolveSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        issue.status = VehicleReviewIssue.Status.RESOLVED
+        issue.dealer_response = serializer.validated_data["dealerResponse"]
+        issue.resolved_at = timezone.now()
+        issue.save(update_fields=["status", "dealer_response", "resolved_at", "updated_at"])
+        if vehicle.listing_verification_status == Vehicle.ListingVerificationStatus.REJECTED:
+            vehicle.listing_verification_status = Vehicle.ListingVerificationStatus.PENDING_REVIEW
+            vehicle.feed_ready = False
+            vehicle.save(update_fields=["listing_verification_status", "feed_ready", "updated_at"])
+        return Response(VehicleReviewIssueSerializer(issue, context={"request": request}).data)
 
     @action(detail=True, methods=["patch"], url_path="review/remove-from-feed")
     def remove_from_feed(self, request, pk=None):
@@ -240,13 +337,78 @@ class VehicleViewSet(EnvelopeMixin, viewsets.ModelViewSet):
         serializer = VehicleReviewDecisionSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         reason = serializer.validated_data.get("reason") or "Removed from feed"
+        issue_inputs = serializer.validated_data.get("issues") or [
+            {"category": VehicleReviewIssue.Category.COMPLIANCE, "message": reason}
+        ]
+        snapshot = self.build_review_snapshot(vehicle)
 
         vehicle.feed_ready = False
         vehicle.published_at = None
         vehicle.listing_rejected_reason = reason
         vehicle.save()
+        for issue_input in issue_inputs:
+            issue = VehicleReviewIssue.objects.create(
+                vehicle=vehicle,
+                reviewer=request.user,
+                category=issue_input["category"],
+                message=issue_input["message"],
+                vehicle_snapshot=snapshot,
+            )
+            from apps.notifications.services import notify_review_issue
+
+            notify_review_issue(vehicle, issue)
+        self.write_review_audit(
+            request.user,
+            "vehicle.feed.removed",
+            vehicle,
+            {"reason": reason, "issueCount": len(issue_inputs)},
+        )
+        return Response(VehicleSerializer(vehicle, context={"request": request}).data)
+
+    @action(detail=True, methods=["patch"], url_path="review/restore-to-feed")
+    def restore_to_feed(self, request, pk=None):
+        self.require_reviewer()
+        vehicle = self.get_object()
+        if vehicle.status != Vehicle.Status.AVAILABLE:
+            raise ValidationError("Only available listings can be restored to the feed.")
+        if vehicle.listing_verification_status != Vehicle.ListingVerificationStatus.APPROVED:
+            raise ValidationError("Only approved listings can be restored to the feed.")
+
+        now = timezone.now()
+        vehicle.feed_ready = True
+        vehicle.published_at = vehicle.published_at or now
+        vehicle.listing_rejected_reason = None
+        vehicle.save(update_fields=["feed_ready", "published_at", "listing_rejected_reason", "updated_at"])
+        vehicle.review_issues.filter(
+            category=VehicleReviewIssue.Category.COMPLIANCE,
+            status=VehicleReviewIssue.Status.OPEN,
+        ).update(status=VehicleReviewIssue.Status.APPROVED, reviewed_at=now)
+        self.write_review_audit(request.user, "vehicle.feed.restored", vehicle)
         return Response(VehicleSerializer(vehicle, context={"request": request}).data)
 
     def require_reviewer(self):
-        if not has_vehicle_review_permission(self.request.user):
+        if not has_vehicle_review_permission(self.request.user, "listing_review.write"):
             raise PermissionDenied("Listing review permission is required.")
+
+    def write_review_audit(self, user, action: str, vehicle, metadata=None):
+        AuditLog.objects.create(
+            actor=user if getattr(user, "is_authenticated", False) else None,
+            action=action,
+            target_type=vehicle.__class__.__name__,
+            target_id=str(vehicle.id),
+            metadata=metadata or {},
+        )
+
+    def build_review_snapshot(self, vehicle):
+        return {
+            "make": vehicle.make,
+            "model": vehicle.model,
+            "year": vehicle.year,
+            "trim": vehicle.trim,
+            "priceNgn": vehicle.price_ngn,
+            "mileageKm": vehicle.mileage_km,
+            "status": vehicle.status,
+            "listingVerificationStatus": vehicle.listing_verification_status,
+            "mediaCount": vehicle.media_items.count(),
+            "updatedAt": vehicle.updated_at.isoformat() if vehicle.updated_at else None,
+        }

@@ -3,8 +3,9 @@ from rest_framework.decorators import action
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from django.utils.dateparse import parse_datetime
 
-from apps.common.permissions import IsDealerStaff
+from apps.common.permissions import IsActiveDealerStaff
 from apps.common.views import EnvelopeMixin
 from apps.marketplace.views import public_vehicle_queryset
 
@@ -48,7 +49,7 @@ class BookingSummaryView(EnvelopeMixin, APIView):
 
 class AppointmentViewSet(EnvelopeMixin, viewsets.ModelViewSet):
     serializer_class = AppointmentSerializer
-    permission_classes = [IsDealerStaff]
+    permission_classes = [IsActiveDealerStaff]
     http_method_names = ["get", "post", "patch", "head", "options"]
 
     def get_queryset(self):
@@ -71,3 +72,28 @@ class AppointmentViewSet(EnvelopeMixin, viewsets.ModelViewSet):
             appointment.booking.save(update_fields=["status", "updated_at"])
         appointment.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @action(detail=True, methods=["patch"], url_path="confirm")
+    def confirm(self, request, pk=None):
+        appointment = self.get_object()
+        if appointment.booking_id:
+            appointment.booking.status = Booking.Status.CONFIRMED
+            appointment.booking.save(update_fields=["status", "updated_at"])
+        return Response(AppointmentSerializer(appointment, context={"request": request}).data)
+
+    @action(detail=True, methods=["patch"], url_path="reschedule")
+    def reschedule(self, request, pk=None):
+        appointment = self.get_object()
+        raw = request.data.get("scheduledAt")
+        if not raw:
+            return Response({"detail": "scheduledAt is required."}, status=status.HTTP_400_BAD_REQUEST)
+        scheduled_at = parse_datetime(raw) if isinstance(raw, str) else raw
+        if not scheduled_at:
+            return Response({"detail": "scheduledAt must be a valid ISO datetime."}, status=status.HTTP_400_BAD_REQUEST)
+        appointment.scheduled_at = scheduled_at
+        appointment.save(update_fields=["scheduled_at", "updated_at"])
+        if appointment.booking_id:
+            appointment.booking.scheduled_at = scheduled_at
+            appointment.booking.status = Booking.Status.RESCHEDULED
+            appointment.booking.save(update_fields=["scheduled_at", "status", "updated_at"])
+        return Response(AppointmentSerializer(appointment, context={"request": request}).data)

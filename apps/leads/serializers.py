@@ -11,6 +11,7 @@ class LeadSerializer(serializers.ModelSerializer):
     dealerSlug = serializers.SlugField(required=False, write_only=True)
     locationId = serializers.UUIDField(source="location_id", required=False, allow_null=True)
     vehicleId = serializers.UUIDField(source="vehicle_id", required=False, allow_null=True)
+    vehicleTitle = serializers.SerializerMethodField()
     createdAt = serializers.DateTimeField(source="created_at", read_only=True)
 
     class Meta:
@@ -21,6 +22,7 @@ class LeadSerializer(serializers.ModelSerializer):
             "dealerSlug",
             "locationId",
             "vehicleId",
+            "vehicleTitle",
             "name",
             "phone",
             "email",
@@ -34,6 +36,11 @@ class LeadSerializer(serializers.ModelSerializer):
             "email": {"required": False, "allow_null": True, "allow_blank": True},
             "message": {"required": False, "allow_null": True, "allow_blank": True},
         }
+
+    def get_vehicleTitle(self, obj):
+        if not obj.vehicle_id:
+            return None
+        return f"{obj.vehicle.year} {obj.vehicle.make} {obj.vehicle.model}"
 
     def validate(self, attrs):
         attrs = super().validate(attrs)

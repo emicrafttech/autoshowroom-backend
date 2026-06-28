@@ -7,7 +7,7 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.common.permissions import IsDealerStaff
+from apps.common.permissions import IsActiveDealerStaff
 from apps.common.views import EnvelopeMixin
 from apps.platform.models import ContentReport
 from apps.platform.serializers import ContentReportSerializer
@@ -29,7 +29,7 @@ class LeadViewSet(EnvelopeMixin, viewsets.ModelViewSet):
     def get_permissions(self):
         if self.action == "create":
             return [AllowAny()]
-        return [IsDealerStaff()]
+        return [IsActiveDealerStaff()]
 
     def get_authenticators(self):
         if getattr(self, "action", None) == "create":
@@ -72,6 +72,12 @@ class PublicReportCreateView(EnvelopeMixin, generics.CreateAPIView):
 
     def post(self, request, *args, **kwargs):
         return super().post(request, *args, **kwargs)
+
+    def perform_create(self, serializer):
+        report = serializer.save()
+        from apps.notifications.platform_notifications import notify_content_report_filed
+
+        notify_content_report_filed(report)
 
 
 class GenericUploadCreateView(EnvelopeMixin, APIView):

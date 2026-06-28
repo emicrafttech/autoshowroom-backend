@@ -1,14 +1,27 @@
+from datetime import timedelta
 from django.test import TestCase
+from django.utils import timezone
 from rest_framework.test import APIClient
+from unittest.mock import patch
 
-from apps.accounts.models import StaffUser
+from apps.accounts.models import DealerSignupOtp, StaffUser
+from apps.accounts.tasks import EMAIL_SUSPENSION_REASON, enforce_dealer_email_verification
 from apps.accounts.tokens import hash_invite_token, invite_expiry
-from apps.dealers.models import Dealer, DealerLocation
+from apps.billing.models import BillingPlan
+from apps.dealers.models import Dealer, DealerLocation, DealerVerificationDocument
+from apps.vehicles.models import Vehicle
 
 
 class AuthDealerFoundationTests(TestCase):
     def setUp(self):
         self.client = APIClient()
+        BillingPlan.objects.create(
+            id="free",
+            name="Free",
+            price_ngn=0,
+            listing_limit=5,
+            stand_limit=5,
+        )
         self.dealer = Dealer.objects.create(
             slug="prime-motors",
             name="Prime Motors",
@@ -67,6 +80,38 @@ class AuthDealerFoundationTests(TestCase):
         self.assertIn("accessToken", refresh_data)
         self.assertIn("refreshToken", refresh_data)
 
+    def test_me_returns_current_user_with_verification_status(self):
+        login_response = self.client.post(
+            "/v1/auth/login",
+            {"email": "owner@example.com", "password": "strong-pass-123"},
+            format="json",
+        )
+        access = login_response.json()["data"]["accessToken"]
+
+        me_response = self.client.get(
+            "/v1/auth/me",
+            HTTP_AUTHORIZATION=f"Bearer {access}",
+        )
+        self.assertEqual(me_response.status_code, 200)
+        me_data = me_response.json()["data"]
+        self.assertEqual(me_data["email"], "owner@example.com")
+        self.assertEqual(me_data["dealerId"], str(self.dealer.id))
+        self.assertEqual(me_data["locationId"], str(self.primary_location.id))
+        self.assertFalse(me_data["emailVerified"])
+
+        self.user.email_verified_at = timezone.now()
+        self.user.save(update_fields=["email_verified_at", "updated_at"])
+        me_response2 = self.client.get(
+            "/v1/auth/me",
+            HTTP_AUTHORIZATION=f"Bearer {access}",
+        )
+        self.assertEqual(me_response2.status_code, 200)
+        self.assertTrue(me_response2.json()["data"]["emailVerified"])
+
+    def test_me_requires_authentication(self):
+        response = self.client.get("/v1/auth/me")
+        self.assertIn(response.status_code, (401, 403))
+
     def test_login_rejects_invalid_credentials(self):
         response = self.client.post(
             "/v1/auth/login",
@@ -76,6 +121,63 @@ class AuthDealerFoundationTests(TestCase):
 
         self.assertEqual(response.status_code, 400)
         self.assertIn("error", response.json())
+
+    def test_dealer_signup_start_and_verify_creates_owner_account(self):
+        start_response = self.client.post(
+            "/v1/auth/dealer-signup/start",
+            {"phone": "+2348099999999"},
+            format="json",
+        )
+
+        self.assertEqual(start_response.status_code, 201)
+        code = DealerSignupOtp.objects.get(phone="+2348099999999").code
+
+        verify_response = self.client.post(
+            "/v1/auth/dealer-signup/verify",
+            {
+                "phone": "+2348099999999",
+                "code": code,
+            },
+            format="json",
+        )
+
+        self.assertEqual(verify_response.status_code, 201)
+        data = verify_response.json()["data"]
+        self.assertIn("accessToken", data)
+        self.assertTrue(data["user"]["email"].endswith("@pending.autoshowroom.local"))
+        self.assertTrue(data["user"]["mustChangePassword"])
+        created_user = StaffUser.objects.get(id=data["user"]["id"])
+        self.assertEqual(created_user.role, StaffUser.Role.OWNER)
+        self.assertEqual(created_user.dealer.name, "New Dealer")
+        self.assertEqual(created_user.dealer.locations.count(), 1)
+
+        self.client.force_authenticate(user=created_user)
+        setup_response = self.client.patch(
+            "/v1/auth/dealer-signup/setup",
+            {
+                "dealerName": "New Dealer Motors",
+                "email": "new-owner@example.com",
+                "standName": "Central Stand",
+                "districtSlug": "garki",
+                "address": "Plot 12, Garki, Abuja",
+            },
+            format="json",
+        )
+        self.assertEqual(setup_response.status_code, 200)
+        created_user.refresh_from_db()
+        self.assertEqual(created_user.email, "new-owner@example.com")
+        self.assertEqual(created_user.dealer.name, "New Dealer Motors")
+        self.assertEqual(created_user.preferred_location.name, "Central Stand")
+
+        password_response = self.client.patch(
+            "/v1/auth/dealer-signup/password",
+            {"password": "signup-pass-123", "confirmPassword": "signup-pass-123"},
+            format="json",
+        )
+        self.assertEqual(password_response.status_code, 200)
+        created_user.refresh_from_db()
+        self.assertTrue(created_user.check_password("signup-pass-123"))
+        self.assertFalse(created_user.must_change_password)
 
     def test_staff_invitation_preview_and_accept(self):
         token = "invite-token-with-enough-length"
@@ -113,6 +215,103 @@ class AuthDealerFoundationTests(TestCase):
         self.assertIsNone(invited.invite_token_hash)
         self.assertFalse(invited.must_change_password)
         self.assertIn("accessToken", accept_response.json()["data"])
+
+    def test_staff_deactivation_role_hierarchy(self):
+        manager = StaffUser.objects.create_user(
+            email="manager@example.com",
+            password="strong-pass-123",
+            name="Manager User",
+            role=StaffUser.Role.MANAGER,
+            dealer=self.dealer,
+        )
+        sales = StaffUser.objects.create_user(
+            email="sales@example.com",
+            password="strong-pass-123",
+            name="Sales User",
+            role=StaffUser.Role.SALES,
+            dealer=self.dealer,
+        )
+
+        # Owner cannot deactivate self.
+        self.authenticate(self.user)
+        self_deactivate = self.client.delete(f"/v1/dealers/me/staff/{self.user.id}")
+        self.assertEqual(self_deactivate.status_code, 400)
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.is_active)
+
+        # Manager cannot deactivate an owner.
+        self.authenticate(manager)
+        manager_deactivate_owner = self.client.delete(f"/v1/dealers/me/staff/{self.user.id}")
+        self.assertEqual(manager_deactivate_owner.status_code, 403)
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.is_active)
+
+        # Sales cannot deactivate a manager.
+        self.authenticate(sales)
+        sales_deactivate_manager = self.client.delete(f"/v1/dealers/me/staff/{manager.id}")
+        self.assertEqual(sales_deactivate_manager.status_code, 403)
+        manager.refresh_from_db()
+        self.assertTrue(manager.is_active)
+
+        # Manager can deactivate a sales member.
+        self.authenticate(manager)
+        manager_deactivate_sales = self.client.delete(f"/v1/dealers/me/staff/{sales.id}")
+        self.assertEqual(manager_deactivate_sales.status_code, 204)
+        sales.refresh_from_db()
+        self.assertFalse(sales.is_active)
+
+        # Owner can deactivate a manager.
+        self.authenticate(self.user)
+        owner_deactivate_manager = self.client.delete(f"/v1/dealers/me/staff/{manager.id}")
+        self.assertEqual(owner_deactivate_manager.status_code, 204)
+        manager.refresh_from_db()
+        self.assertFalse(manager.is_active)
+
+    def test_staff_reactivation_role_hierarchy(self):
+        manager = StaffUser.objects.create_user(
+            email="react-manager@example.com",
+            password="strong-pass-123",
+            name="Manager User",
+            role=StaffUser.Role.MANAGER,
+            dealer=self.dealer,
+            is_active=False,
+        )
+        sales = StaffUser.objects.create_user(
+            email="react-sales@example.com",
+            password="strong-pass-123",
+            name="Sales User",
+            role=StaffUser.Role.SALES,
+            dealer=self.dealer,
+            is_active=False,
+        )
+
+        # Owner can reactivate a manager.
+        self.authenticate(self.user)
+        owner_reactivate = self.client.patch(
+            f"/v1/dealers/me/staff/{manager.id}", {"is_active": True}, format="json"
+        )
+        self.assertEqual(owner_reactivate.status_code, 200)
+        manager.refresh_from_db()
+        self.assertTrue(manager.is_active)
+
+        # Manager can reactivate a sales member.
+        self.authenticate(manager)
+        manager_reactivate = self.client.patch(
+            f"/v1/dealers/me/staff/{sales.id}", {"is_active": True}, format="json"
+        )
+        self.assertEqual(manager_reactivate.status_code, 200)
+        sales.refresh_from_db()
+        self.assertTrue(sales.is_active)
+
+        # Manager cannot reactivate the owner (owner inactive -> simulate).
+        self.user.is_active = False
+        self.user.save(update_fields=["is_active", "updated_at"])
+        manager_reactivate_owner = self.client.patch(
+            f"/v1/dealers/me/staff/{self.user.id}", {"is_active": True}, format="json"
+        )
+        self.assertEqual(manager_reactivate_owner.status_code, 403)
+        self.user.refresh_from_db()
+        self.assertFalse(self.user.is_active)
 
     def test_change_password(self):
         self.authenticate()
@@ -178,14 +377,23 @@ class AuthDealerFoundationTests(TestCase):
         )
         self.assertEqual(create_response.status_code, 201)
         created_id = create_response.json()["data"]["id"]
+        self.assertEqual(
+            create_response.json()["data"]["premisesVerificationStatus"],
+            "not_submitted",
+        )
+        self.assertEqual(create_response.json()["data"]["evidenceFiles"], [])
 
         patch_response = self.client.patch(
             f"/v1/dealers/me/locations/{created_id}",
-            {"area": "Maitama District"},
+            {
+                "area": "Maitama District",
+                "evidenceFiles": ["https://cdn.example.com/maitama-stand.jpg"],
+            },
             format="json",
         )
         self.assertEqual(patch_response.status_code, 200)
         self.assertEqual(patch_response.json()["data"]["area"], "Maitama District")
+        self.assertEqual(patch_response.json()["data"]["premisesVerificationStatus"], "pending")
 
         set_primary_response = self.client.post(
             f"/v1/dealers/me/locations/{created_id}/set-primary",
@@ -195,6 +403,204 @@ class AuthDealerFoundationTests(TestCase):
 
         delete_response = self.client.delete(f"/v1/dealers/me/locations/{created_id}")
         self.assertEqual(delete_response.status_code, 204)
+
+    def test_email_verification_send_and_verify(self):
+        self.authenticate()
+
+        token = "email-token-with-enough-length"
+        with patch("apps.accounts.views.generate_invite_token", return_value=token), patch("apps.accounts.views.send_mail") as send_mail:
+            send_response = self.client.post("/v1/auth/email-verification/send", {}, format="json")
+
+        self.assertEqual(send_response.status_code, 200)
+        self.assertTrue(send_response.json()["data"]["sent"])
+        self.assertFalse(send_response.json()["data"]["user"]["emailVerified"])
+        self.user.refresh_from_db()
+        self.assertIsNotNone(self.user.email_verification_token_hash)
+        self.assertIsNotNone(self.user.email_verification_sent_at)
+        send_mail.assert_called_once()
+
+        verify_response = self.client.post(
+            "/v1/auth/email-verification/verify",
+            {"token": token},
+            format="json",
+        )
+
+        self.assertEqual(verify_response.status_code, 200)
+        self.user.refresh_from_db()
+        self.assertIsNotNone(self.user.email_verified_at)
+        self.assertIsNone(self.user.email_verification_token_hash)
+
+    def test_dealer_verification_document_upload_sets_pending_status(self):
+        self.dealer.verification_status = Dealer.VerificationStatus.APPROVED
+        self.dealer.verified_badge = True
+        self.dealer.verified_at = timezone.now()
+        self.dealer.save(update_fields=["verification_status", "verified_badge", "verified_at", "updated_at"])
+        self.authenticate()
+
+        response = self.client.post(
+            "/v1/dealers/me/verification/documents",
+            {
+                "kind": "cac",
+                "title": "CAC certificate",
+                "fileUrl": "https://example.com/cac.pdf",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.json()["data"]["status"], "pending")
+        self.assertEqual(DealerVerificationDocument.objects.count(), 1)
+        self.dealer.refresh_from_db()
+        self.assertEqual(self.dealer.verification_status, Dealer.VerificationStatus.PENDING)
+        self.assertFalse(self.dealer.verified_badge)
+
+    def test_dealer_verification_document_resubmission_replaces_same_kind(self):
+        old_document = DealerVerificationDocument.objects.create(
+            dealer=self.dealer,
+            kind=DealerVerificationDocument.Kind.PREMISES,
+            title="Premises proof",
+            file_url="https://example.com/old.pdf",
+            status=DealerVerificationDocument.Status.REJECTED,
+            rejection_reason="Too blurry.",
+            reviewed_at=timezone.now(),
+        )
+        self.authenticate()
+
+        response = self.client.post(
+            "/v1/dealers/me/verification/documents",
+            {
+                "kind": "premises",
+                "title": "New premises proof",
+                "fileUrl": "https://example.com/new.jpg",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(DealerVerificationDocument.objects.count(), 1)
+        old_document.refresh_from_db()
+        self.assertEqual(old_document.title, "Premises proof")
+        self.assertEqual(old_document.file_url, "https://example.com/new.jpg")
+        self.assertEqual(old_document.status, DealerVerificationDocument.Status.PENDING)
+        self.assertEqual(old_document.rejection_reason, "")
+        self.assertIsNone(old_document.reviewed_at)
+        self.primary_location.refresh_from_db()
+        self.assertEqual(
+            self.primary_location.premises_verification_status,
+            DealerLocation.PremisesVerificationStatus.PENDING,
+        )
+
+    def test_primary_stand_can_request_verification_with_kyd_premises_proof(self):
+        DealerVerificationDocument.objects.create(
+            dealer=self.dealer,
+            kind=DealerVerificationDocument.Kind.PREMISES,
+            title="Premises proof",
+            file_url="https://example.com/premises.jpg",
+        )
+        self.authenticate()
+
+        primary_response = self.client.post(
+            f"/v1/dealers/me/locations/{self.primary_location.id}/request-verification",
+            {},
+            format="json",
+        )
+        self.assertEqual(primary_response.status_code, 200)
+        self.assertEqual(primary_response.json()["data"]["premisesVerificationStatus"], "pending")
+
+        secondary_response = self.client.post(
+            f"/v1/dealers/me/locations/{self.second_location.id}/request-verification",
+            {},
+            format="json",
+        )
+        self.assertEqual(secondary_response.status_code, 400)
+
+    def test_email_verification_job_suspends_and_hides_overdue_dealer(self):
+        self.user.email_verification_required_at = timezone.now() - timedelta(days=8)
+        self.user.email_verified_at = None
+        self.user.save(update_fields=["email_verification_required_at", "email_verified_at", "updated_at"])
+        Vehicle.objects.create(
+            dealer=self.dealer,
+            location=self.primary_location,
+            make="Toyota",
+            model="Camry",
+            slug="toyota-camry",
+            year=2022,
+            trim="SE",
+            price_ngn=25000000,
+            mileage_km=12000,
+            transmission=Vehicle.Transmission.AUTOMATIC,
+            fuel=Vehicle.Fuel.PETROL,
+            colour="Black",
+            body_type=Vehicle.BodyType.SEDAN,
+            drivetrain=Vehicle.Drivetrain.FWD,
+            condition_grade=Vehicle.ConditionGrade.GOOD,
+            status=Vehicle.Status.AVAILABLE,
+            listing_verification_status=Vehicle.ListingVerificationStatus.APPROVED,
+            feed_ready=True,
+        )
+
+        result = enforce_dealer_email_verification()
+
+        self.assertEqual(result["suspended"], 1)
+        self.dealer.refresh_from_db()
+        self.assertEqual(self.dealer.operational_status, Dealer.OperationalStatus.SUSPENDED)
+        self.assertEqual(self.dealer.suspended_reason, EMAIL_SUSPENSION_REASON)
+
+        login_response = self.client.post(
+            "/v1/auth/login",
+            {"email": "owner@example.com", "password": "strong-pass-123"},
+            format="json",
+        )
+        self.assertEqual(login_response.status_code, 200)
+
+        self.authenticate()
+        profile_response = self.client.get("/v1/dealers/me")
+        self.assertEqual(profile_response.status_code, 200)
+
+        with patch("apps.accounts.views.send_mail"):
+            resend_response = self.client.post("/v1/auth/email-verification/send", {}, format="json")
+        self.assertEqual(resend_response.status_code, 200)
+
+        blocked_response = self.client.get("/v1/vehicles")
+        self.assertEqual(blocked_response.status_code, 403)
+
+        feed_response = self.client.get("/v1/feed")
+        self.assertEqual(feed_response.status_code, 200)
+        self.assertEqual(feed_response.json()["data"]["results"], [])
+
+    def test_email_verification_reactivates_email_suspended_dealer(self):
+        self.dealer.operational_status = Dealer.OperationalStatus.SUSPENDED
+        self.dealer.suspended_at = timezone.now()
+        self.dealer.suspended_reason = EMAIL_SUSPENSION_REASON
+        self.dealer.save(update_fields=["operational_status", "suspended_at", "suspended_reason", "updated_at"])
+        self.authenticate()
+
+        token = "email-token-with-enough-length"
+        with patch("apps.accounts.views.generate_invite_token", return_value=token), patch("apps.accounts.views.send_mail"):
+            send_response = self.client.post("/v1/auth/email-verification/send", {}, format="json")
+        verify_response = self.client.post(
+            "/v1/auth/email-verification/verify",
+            {"token": token},
+            format="json",
+        )
+
+        self.assertEqual(verify_response.status_code, 200)
+        self.dealer.refresh_from_db()
+        self.assertEqual(self.dealer.operational_status, Dealer.OperationalStatus.ACTIVE)
+        self.assertIsNone(self.dealer.suspended_reason)
+
+    def test_dealer_location_create_respects_stand_limit(self):
+        BillingPlan.objects.filter(id="free").update(stand_limit=2)
+        self.authenticate()
+
+        response = self.client.post(
+            "/v1/dealers/me/locations",
+            {"name": "Limit Stand", "districtSlug": "maitama"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"]["details"]["standLimit"], "2")
 
     def test_dealer_location_routes_are_tenant_scoped(self):
         other_dealer = Dealer.objects.create(

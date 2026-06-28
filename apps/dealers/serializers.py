@@ -8,6 +8,8 @@ from .models import Dealer, DealerLocation, DealerVerificationDocument
 
 class DealerLocationSerializer(serializers.ModelSerializer):
     dealerId = serializers.UUIDField(source="dealer_id", read_only=True)
+    dealerName = serializers.CharField(source="dealer.name", read_only=True)
+    dealer = serializers.SerializerMethodField()
     citySlug = serializers.SlugField(source="city_slug", required=False, default="abuja")
     districtSlug = serializers.SlugField(
         source="district_slug",
@@ -31,6 +33,12 @@ class DealerLocationSerializer(serializers.ModelSerializer):
         source="premises_rejection_reason",
         read_only=True,
     )
+    evidenceFiles = serializers.ListField(
+        child=serializers.URLField(),
+        source="evidence_files",
+        required=False,
+    )
+    premisesEvidence = serializers.SerializerMethodField()
     geoChangedAt = serializers.DateTimeField(source="geo_changed_at", read_only=True)
     pendingGeo = serializers.JSONField(source="pending_geo", read_only=True)
     premisesRejectionCount = serializers.IntegerField(
@@ -45,6 +53,8 @@ class DealerLocationSerializer(serializers.ModelSerializer):
         fields = [
             "id",
             "dealerId",
+            "dealerName",
+            "dealer",
             "name",
             "area",
             "citySlug",
@@ -57,6 +67,8 @@ class DealerLocationSerializer(serializers.ModelSerializer):
             "premisesVerifiedAt",
             "premisesRejectedAt",
             "premisesRejectionReason",
+            "evidenceFiles",
+            "premisesEvidence",
             "geoChangedAt",
             "pendingGeo",
             "premisesRejectionCount",
@@ -75,6 +87,32 @@ class DealerLocationSerializer(serializers.ModelSerializer):
         if not attrs.get("area") and attrs.get("district_slug"):
             attrs["area"] = attrs["district_slug"]
         return attrs
+
+    def get_dealer(self, obj):
+        dealer = getattr(obj, "dealer", None)
+        if dealer is None:
+            return None
+        return {"id": str(dealer.id), "name": dealer.name}
+
+    def get_premisesEvidence(self, obj):
+        evidence = list(obj.evidence_files or [])
+        dealer = getattr(obj, "dealer", None)
+        if dealer is not None:
+            latest_premises_document = None
+            for document in dealer.verification_documents.all():
+                if document.kind != DealerVerificationDocument.Kind.PREMISES or not document.file_url:
+                    continue
+                if latest_premises_document is None or document.created_at > latest_premises_document.created_at:
+                    latest_premises_document = document
+            if latest_premises_document is not None:
+                evidence.append(latest_premises_document.file_url)
+        seen = set()
+        unique = []
+        for url in evidence:
+            if url not in seen:
+                seen.add(url)
+                unique.append(url)
+        return unique
 
 
 class DealerProfileSerializer(serializers.ModelSerializer):
@@ -228,22 +266,43 @@ class DealerStaffSerializer(serializers.ModelSerializer):
 
 class DealerVerificationDocumentSerializer(serializers.ModelSerializer):
     fileUrl = serializers.URLField(source="file_url")
+    rejectionReason = serializers.CharField(source="rejection_reason", read_only=True)
+    reviewedAt = serializers.DateTimeField(source="reviewed_at", read_only=True)
     createdAt = serializers.DateTimeField(source="created_at", read_only=True)
 
     class Meta:
         model = DealerVerificationDocument
-        fields = ["id", "kind", "title", "fileUrl", "createdAt"]
+        fields = [
+            "id",
+            "kind",
+            "title",
+            "fileUrl",
+            "status",
+            "rejectionReason",
+            "reviewedAt",
+            "createdAt",
+        ]
+        read_only_fields = ["id", "status", "rejectionReason", "reviewedAt", "createdAt"]
 
 
 class DealerVerificationSerializer(DealerProfileSerializer):
-    documents = DealerVerificationDocumentSerializer(
-        source="verification_documents",
-        many=True,
-        read_only=True,
-    )
+    documents = serializers.SerializerMethodField()
 
     class Meta(DealerProfileSerializer.Meta):
         fields = DealerProfileSerializer.Meta.fields + ["documents"]
+
+    def get_documents(self, obj):
+        latest_by_kind = {}
+        for document in obj.verification_documents.all():
+            existing = latest_by_kind.get(document.kind)
+            if existing is None or document.created_at > existing.created_at:
+                latest_by_kind[document.kind] = document
+        documents = sorted(
+            latest_by_kind.values(),
+            key=lambda document: document.created_at,
+            reverse=True,
+        )
+        return DealerVerificationDocumentSerializer(documents, many=True).data
 
 
 class DealerSelfServiceRequestSerializer(serializers.Serializer):

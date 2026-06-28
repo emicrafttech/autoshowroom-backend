@@ -8,6 +8,7 @@ class BillingPlan(models.Model):
     name = models.CharField(max_length=120)
     price_ngn = models.PositiveBigIntegerField(default=0)
     listing_limit = models.PositiveIntegerField(default=10)
+    stand_limit = models.PositiveIntegerField(default=1)
     is_active = models.BooleanField(default=True)
     features = models.JSONField(default=list, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -31,6 +32,19 @@ class Subscription(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     dealer = models.ForeignKey("dealers.Dealer", on_delete=models.CASCADE, related_name="subscriptions")
     plan = models.ForeignKey(BillingPlan, on_delete=models.PROTECT, related_name="subscriptions")
+    pending_plan = models.ForeignKey(
+        BillingPlan,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="pending_subscriptions",
+    )
+    pending_plan_effective_at = models.DateTimeField(null=True, blank=True)
+    paystack_authorization_code = models.CharField(max_length=120, blank=True)
+    payment_card_brand = models.CharField(max_length=40, blank=True)
+    payment_card_last4 = models.CharField(max_length=4, blank=True)
+    payment_card_exp_month = models.CharField(max_length=2, blank=True)
+    payment_card_exp_year = models.CharField(max_length=4, blank=True)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.ACTIVE)
     current_period_end = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)

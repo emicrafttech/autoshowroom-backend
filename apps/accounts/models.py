@@ -50,6 +50,13 @@ class StaffUser(AbstractBaseUser, PermissionsMixin):
         null=True,
         blank=True,
     )
+    platform_role = models.ForeignKey(
+        "platform.PlatformRole",
+        on_delete=models.SET_NULL,
+        related_name="staff_users",
+        null=True,
+        blank=True,
+    )
     preferred_location = models.ForeignKey(
         "dealers.DealerLocation",
         on_delete=models.SET_NULL,
@@ -64,6 +71,10 @@ class StaffUser(AbstractBaseUser, PermissionsMixin):
     invite_token_hash = models.CharField(max_length=64, null=True, blank=True)
     invite_expires_at = models.DateTimeField(null=True, blank=True)
     password_changed_at = models.DateTimeField(null=True, blank=True)
+    email_verified_at = models.DateTimeField(null=True, blank=True)
+    email_verification_token_hash = models.CharField(max_length=64, null=True, blank=True)
+    email_verification_sent_at = models.DateTimeField(null=True, blank=True)
+    email_verification_required_at = models.DateTimeField(null=True, blank=True)
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -87,3 +98,20 @@ class StaffUser(AbstractBaseUser, PermissionsMixin):
             and self.invite_expires_at
             and self.invite_expires_at > timezone.now()
         )
+
+
+class DealerSignupOtp(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    phone = models.CharField(max_length=32)
+    code = models.CharField(max_length=8)
+    expires_at = models.DateTimeField()
+    consumed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [models.Index(fields=["phone", "code"])]
+
+    @property
+    def is_valid(self) -> bool:
+        return self.consumed_at is None and self.expires_at > timezone.now()

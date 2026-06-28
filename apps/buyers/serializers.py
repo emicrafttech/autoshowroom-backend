@@ -103,8 +103,14 @@ class BuyerMessageSerializer(serializers.ModelSerializer):
         fields = ["id", "senderType", "body", "createdAt"]
 
 
+class DealerConversationVehicleSerializer(PublicVehicleSerializer):
+    class Meta(PublicVehicleSerializer.Meta):
+        fields = PublicVehicleSerializer.Meta.fields + ["status"]
+
+
 class BuyerConversationSerializer(serializers.ModelSerializer):
     dealerId = serializers.UUIDField(source="dealer_id", read_only=True)
+    buyer = BuyerProfileSerializer(read_only=True)
     vehicle = PublicVehicleSerializer(read_only=True)
     bookingId = serializers.UUIDField(source="booking_id", read_only=True)
     lastMessageAt = serializers.DateTimeField(source="last_message_at", read_only=True)
@@ -115,11 +121,16 @@ class BuyerConversationSerializer(serializers.ModelSerializer):
         fields = [
             "id",
             "dealerId",
+            "buyer",
             "vehicle",
             "bookingId",
             "lastMessageAt",
             "messages",
         ]
+
+
+class DealerConversationSerializer(BuyerConversationSerializer):
+    vehicle = DealerConversationVehicleSerializer(read_only=True)
 
 
 class OpenConversationSerializer(serializers.Serializer):

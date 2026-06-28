@@ -3,11 +3,14 @@ from django.urls import resolve
 from django.urls.exceptions import Resolver404
 from rest_framework.test import APIClient
 from django.test import TestCase
+from unittest.mock import patch
 
 from apps.accounts.models import StaffUser
 from apps.dealers.models import Dealer, DealerLocation
+from apps.notifications.models import DealerNotification
+from apps.platform.models import AuditLog, PlatformRole
 
-from .models import Vehicle
+from .models import Vehicle, VehicleReviewIssue
 
 
 class UnifiedVehicleCatalogTests(TestCase):
@@ -55,6 +58,10 @@ class UnifiedVehicleCatalogTests(TestCase):
             name="Reviewer User",
             role=StaffUser.Role.OWNER,
             is_staff=True,
+            platform_role=PlatformRole.objects.create(
+                name="Listing reviewer",
+                capabilities=["listing_review.read", "listing_review.write"],
+            ),
         )
         Group.objects.create(name="listing_reviewers")
 
@@ -135,10 +142,12 @@ class UnifiedVehicleCatalogTests(TestCase):
         list_response = self.client.get("/v1/vehicles")
         self.assertEqual(list_response.status_code, 200)
         self.assertEqual(len(list_response.json()["data"]["results"]), 1)
+        self.assertEqual(list_response.json()["data"]["results"][0]["dealerName"], "Prime Motors")
 
         detail_response = self.client.get(f"/v1/vehicles/{vehicle_id}")
         self.assertEqual(detail_response.status_code, 200)
         self.assertEqual(detail_response.json()["data"]["make"], "Toyota")
+        self.assertEqual(detail_response.json()["data"]["dealerName"], "Prime Motors")
 
         update_response = self.client.patch(
             f"/v1/vehicles/{vehicle_id}",
@@ -147,6 +156,21 @@ class UnifiedVehicleCatalogTests(TestCase):
         )
         self.assertEqual(update_response.status_code, 200)
         self.assertEqual(update_response.json()["data"]["priceNgn"], 14500000)
+
+    def test_auto_generated_vehicle_slugs_are_unique_per_dealer(self):
+        self.authenticate()
+        payload = self.vehicle_payload()
+        payload.pop("slug")
+
+        first_response = self.client.post("/v1/vehicles", payload, format="json")
+        second_response = self.client.post("/v1/vehicles", payload, format="json")
+
+        self.assertEqual(first_response.status_code, 201)
+        self.assertEqual(second_response.status_code, 201)
+        self.assertNotEqual(
+            first_response.json()["data"]["slug"],
+            second_response.json()["data"]["slug"],
+        )
 
     def test_dealer_vehicle_queries_are_tenant_scoped(self):
         own_vehicle = self.create_vehicle()
@@ -166,6 +190,41 @@ class UnifiedVehicleCatalogTests(TestCase):
 
         detail_response = self.client.get(f"/v1/vehicles/{other_vehicle.id}")
         self.assertEqual(detail_response.status_code, 404)
+
+    def test_dealer_can_delete_own_vehicle(self):
+        vehicle = self.create_vehicle()
+        vehicle.media_items.create(
+            kind="photo",
+            url="https://example.com/front.jpg",
+            content_type="image/jpeg",
+            file_name="front.jpg",
+            s3_key="vehicle-media/front.jpg",
+            status="ready",
+            sort_order=1,
+        )
+        self.authenticate()
+
+        with patch("apps.vehicles.views.delete_media_objects") as delete_media_objects:
+            response = self.client.delete(f"/v1/vehicles/{vehicle.id}")
+
+        self.assertEqual(response.status_code, 204)
+        delete_media_objects.assert_called_once_with(["vehicle-media/front.jpg"])
+        self.assertFalse(Vehicle.objects.filter(id=vehicle.id).exists())
+
+    def test_dealer_cannot_delete_other_dealer_vehicle(self):
+        vehicle = self.create_vehicle(
+            dealer=self.other_dealer,
+            location=self.other_location,
+            slug="honda-accord-other",
+            make="Honda",
+            model="Accord",
+        )
+        self.authenticate()
+
+        response = self.client.delete(f"/v1/vehicles/{vehicle.id}")
+
+        self.assertEqual(response.status_code, 404)
+        self.assertTrue(Vehicle.objects.filter(id=vehicle.id).exists())
 
     def test_status_transition_requires_attestation_for_available(self):
         vehicle = self.create_vehicle()
@@ -234,12 +293,19 @@ class UnifiedVehicleCatalogTests(TestCase):
             Vehicle.ListingVerificationStatus.APPROVED,
         )
         self.assertTrue(own_vehicle.feed_ready)
-
-        reject_response = self.client.patch(
-            f"/v1/vehicles/{other_vehicle.id}/review/reject",
-            {"reason": "Incomplete documents"},
-            format="json",
+        approve_audit = AuditLog.objects.get(
+            action="vehicle.review.approved",
+            target_id=str(own_vehicle.id),
         )
+        self.assertEqual(approve_audit.actor, self.reviewer)
+        self.assertEqual(approve_audit.metadata["feedReady"], True)
+
+        with patch("apps.notifications.services.send_vehicle_review_issue_email.delay"):
+            reject_response = self.client.patch(
+                f"/v1/vehicles/{other_vehicle.id}/review/reject",
+                {"reason": "Incomplete documents"},
+                format="json",
+            )
         self.assertEqual(reject_response.status_code, 200)
         other_vehicle.refresh_from_db()
         self.assertEqual(
@@ -247,16 +313,56 @@ class UnifiedVehicleCatalogTests(TestCase):
             Vehicle.ListingVerificationStatus.REJECTED,
         )
         self.assertEqual(other_vehicle.listing_rejected_reason, "Incomplete documents")
-
-        remove_response = self.client.patch(
-            f"/v1/vehicles/{own_vehicle.id}/review/remove-from-feed",
-            {"reason": "Needs updated pricing"},
-            format="json",
+        reject_audit = AuditLog.objects.get(
+            action="vehicle.review.rejected",
+            target_id=str(other_vehicle.id),
         )
+        self.assertEqual(reject_audit.actor, self.reviewer)
+        self.assertEqual(reject_audit.metadata["reason"], "Incomplete documents")
+        self.assertEqual(reject_audit.metadata["issueCount"], 1)
+
+        with patch("apps.notifications.services.send_vehicle_review_issue_email.delay") as remove_email_task:
+            remove_response = self.client.patch(
+                f"/v1/vehicles/{own_vehicle.id}/review/remove-from-feed",
+                {"reason": "Needs updated pricing"},
+                format="json",
+            )
         self.assertEqual(remove_response.status_code, 200)
         own_vehicle.refresh_from_db()
         self.assertFalse(own_vehicle.feed_ready)
         self.assertEqual(own_vehicle.listing_rejected_reason, "Needs updated pricing")
+        remove_issue = VehicleReviewIssue.objects.get(vehicle=own_vehicle)
+        self.assertEqual(remove_issue.category, VehicleReviewIssue.Category.COMPLIANCE)
+        self.assertEqual(remove_issue.message, "Needs updated pricing")
+        self.assertEqual(DealerNotification.objects.filter(review_issue=remove_issue).count(), 1)
+        remove_email_task.assert_called_once()
+        remove_audit = AuditLog.objects.get(
+            action="vehicle.feed.removed",
+            target_id=str(own_vehicle.id),
+        )
+        self.assertEqual(remove_audit.actor, self.reviewer)
+        self.assertEqual(remove_audit.metadata["reason"], "Needs updated pricing")
+        self.assertEqual(remove_audit.metadata["issueCount"], 1)
+
+        own_vehicle.listing_verification_status = Vehicle.ListingVerificationStatus.APPROVED
+        own_vehicle.save(update_fields=["listing_verification_status", "updated_at"])
+        restore_response = self.client.patch(
+            f"/v1/vehicles/{own_vehicle.id}/review/restore-to-feed",
+            {},
+            format="json",
+        )
+        self.assertEqual(restore_response.status_code, 200)
+        own_vehicle.refresh_from_db()
+        self.assertTrue(own_vehicle.feed_ready)
+        self.assertIsNotNone(own_vehicle.published_at)
+        self.assertIsNone(own_vehicle.listing_rejected_reason)
+        remove_issue.refresh_from_db()
+        self.assertEqual(remove_issue.status, VehicleReviewIssue.Status.APPROVED)
+        restore_audit = AuditLog.objects.get(
+            action="vehicle.feed.restored",
+            target_id=str(own_vehicle.id),
+        )
+        self.assertEqual(restore_audit.actor, self.reviewer)
 
     def test_dealer_cannot_run_review_actions(self):
         vehicle = self.create_vehicle(
@@ -268,6 +374,175 @@ class UnifiedVehicleCatalogTests(TestCase):
         response = self.client.patch(f"/v1/vehicles/{vehicle.id}/review/approve")
 
         self.assertEqual(response.status_code, 403)
+
+    def test_reviewer_creates_review_issues_notifications_and_email_jobs(self):
+        vehicle = self.create_vehicle(
+            status=Vehicle.Status.AVAILABLE,
+            listing_verification_status=Vehicle.ListingVerificationStatus.PENDING_REVIEW,
+        )
+        self.authenticate(self.reviewer)
+
+        with patch("apps.notifications.services.send_vehicle_review_issue_email.delay") as email_task:
+            response = self.client.patch(
+                f"/v1/vehicles/{vehicle.id}/review/reject",
+                {
+                    "reason": "Media needs work",
+                    "issues": [
+                        {
+                            "category": "media",
+                            "message": "Add clear walkaround videos of the engine bay.",
+                        },
+                        {
+                            "category": "details",
+                            "message": "Confirm the VIN matches the documents.",
+                        },
+                    ],
+                },
+                format="json",
+            )
+
+        self.assertEqual(response.status_code, 200)
+        vehicle.refresh_from_db()
+        self.assertEqual(
+            vehicle.listing_verification_status,
+            Vehicle.ListingVerificationStatus.REJECTED,
+        )
+        self.assertEqual(VehicleReviewIssue.objects.filter(vehicle=vehicle).count(), 2)
+        self.assertEqual(DealerNotification.objects.filter(vehicle=vehicle).count(), 2)
+        self.assertEqual(email_task.call_count, 2)
+
+    def test_reviewer_cannot_approve_while_open_issues_remain(self):
+        vehicle = self.create_vehicle(
+            status=Vehicle.Status.AVAILABLE,
+            listing_verification_status=Vehicle.ListingVerificationStatus.PENDING_REVIEW,
+        )
+        VehicleReviewIssue.objects.create(
+            vehicle=vehicle,
+            reviewer=self.reviewer,
+            category=VehicleReviewIssue.Category.MEDIA,
+            message="Add more videos.",
+        )
+        self.authenticate(self.reviewer)
+
+        response = self.client.patch(
+            f"/v1/vehicles/{vehicle.id}/review/approve",
+            {},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        vehicle.refresh_from_db()
+        self.assertEqual(
+            vehicle.listing_verification_status,
+            Vehicle.ListingVerificationStatus.PENDING_REVIEW,
+        )
+
+    def test_dealer_resolves_issue_and_listing_returns_to_pending_review(self):
+        vehicle = self.create_vehicle(
+            status=Vehicle.Status.AVAILABLE,
+            listing_verification_status=Vehicle.ListingVerificationStatus.REJECTED,
+            listing_rejected_reason="Fix photos",
+        )
+        issue = VehicleReviewIssue.objects.create(
+            vehicle=vehicle,
+            reviewer=self.reviewer,
+            category=VehicleReviewIssue.Category.MEDIA,
+            message="Add clean dashboard photos.",
+        )
+        self.authenticate()
+
+        update_response = self.client.patch(
+            f"/v1/vehicles/{vehicle.id}",
+            {"notes": "Added clearer dashboard media and updated description."},
+            format="json",
+        )
+        resolve_response = self.client.patch(
+            f"/v1/vehicles/{vehicle.id}/review/issues/{issue.id}/resolve",
+            {"dealerResponse": "Added clearer dashboard photos."},
+            format="json",
+        )
+
+        self.assertEqual(update_response.status_code, 200)
+        self.assertEqual(resolve_response.status_code, 200)
+        vehicle.refresh_from_db()
+        issue.refresh_from_db()
+        self.assertEqual(issue.status, VehicleReviewIssue.Status.RESOLVED)
+        self.assertEqual(issue.dealer_response, "Added clearer dashboard photos.")
+        self.assertEqual(
+            vehicle.listing_verification_status,
+            Vehicle.ListingVerificationStatus.PENDING_REVIEW,
+        )
+
+    def test_review_trail_retains_request_response_and_snapshot(self):
+        vehicle = self.create_vehicle(
+            status=Vehicle.Status.AVAILABLE,
+            listing_verification_status=Vehicle.ListingVerificationStatus.PENDING_REVIEW,
+        )
+        self.authenticate(self.reviewer)
+        with patch("apps.notifications.services.send_vehicle_review_issue_email.delay"):
+            reject_response = self.client.patch(
+                f"/v1/vehicles/{vehicle.id}/review/reject",
+                {
+                    "issues": [
+                        {
+                            "category": "price",
+                            "message": "Price looks inconsistent with listed mileage.",
+                        }
+                    ]
+                },
+                format="json",
+            )
+        self.assertEqual(reject_response.status_code, 200)
+        issue = VehicleReviewIssue.objects.get(vehicle=vehicle)
+        self.authenticate()
+        self.client.patch(
+            f"/v1/vehicles/{vehicle.id}",
+            {"priceNgn": 14000000},
+            format="json",
+        )
+        self.client.patch(
+            f"/v1/vehicles/{vehicle.id}/review/issues/{issue.id}/resolve",
+            {"dealerResponse": "Adjusted the price after review."},
+            format="json",
+        )
+        self.authenticate(self.reviewer)
+
+        trail_response = self.client.get(f"/v1/vehicles/{vehicle.id}/review/issues")
+
+        self.assertEqual(trail_response.status_code, 200)
+        trail = trail_response.json()["data"]
+        self.assertEqual(trail[0]["message"], "Price looks inconsistent with listed mileage.")
+        self.assertEqual(trail[0]["dealerResponse"], "Adjusted the price after review.")
+        self.assertEqual(trail[0]["vehicleSnapshot"]["priceNgn"], 15000000)
+
+    def test_dealer_can_list_and_mark_notifications_read(self):
+        vehicle = self.create_vehicle()
+        issue = VehicleReviewIssue.objects.create(
+            vehicle=vehicle,
+            reviewer=self.reviewer,
+            category=VehicleReviewIssue.Category.DETAILS,
+            message="Update the vehicle details.",
+        )
+        notification = DealerNotification.objects.create(
+            dealer=self.dealer,
+            recipient=self.user,
+            vehicle=vehicle,
+            review_issue=issue,
+            type=DealerNotification.Type.REVIEW_ISSUE,
+            title="Listing review issue",
+            body="Update the vehicle details.",
+        )
+        self.authenticate()
+
+        list_response = self.client.get("/v1/notifications")
+        read_response = self.client.post(f"/v1/notifications/{notification.id}/read")
+        read_all_response = self.client.post("/v1/notifications/read-all")
+
+        self.assertEqual(list_response.status_code, 200)
+        self.assertEqual(list_response.json()["data"]["results"][0]["id"], str(notification.id))
+        self.assertEqual(read_response.status_code, 200)
+        self.assertIsNotNone(read_response.json()["data"]["readAt"])
+        self.assertEqual(read_all_response.status_code, 200)
 
     def test_platform_listing_duplicate_routes_are_not_registered(self):
         with self.assertRaises(Resolver404):

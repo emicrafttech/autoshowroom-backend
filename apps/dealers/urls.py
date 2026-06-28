@@ -3,6 +3,8 @@ from rest_framework.routers import SimpleRouter
 
 from .views import (
     DealerContextView,
+    DealerChatViewSet,
+    DealerDeleteAccountView,
     DealerLocationViewSet,
     DealerProfileView,
     DealerPrivacyRequestView,
@@ -21,6 +23,7 @@ router.register(
     basename="dealer-location",
 )
 router.register("me/staff", DealerStaffViewSet, basename="dealer-staff")
+router.register("me/chats", DealerChatViewSet, basename="dealer-chat")
 router.register("", DealerVerificationViewSet, basename="dealer")
 
 urlpatterns = [
@@ -37,5 +40,6 @@ urlpatterns = [
     path("me/sanction-status", DealerSanctionStatusView.as_view(), name="dealer-sanction-status"),
     path("me/sanction-appeal", DealerSanctionAppealView.as_view(), name="dealer-sanction-appeal"),
     path("me/privacy-request", DealerPrivacyRequestView.as_view(), name="dealer-privacy-request"),
+    path("me/delete-account", DealerDeleteAccountView.as_view(), name="dealer-delete-account"),
     path("", include(router.urls)),
 ]

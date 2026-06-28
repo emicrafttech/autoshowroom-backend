@@ -3,6 +3,7 @@ from pathlib import Path
 from datetime import timedelta
 
 import dj_database_url
+from celery.schedules import crontab
 from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -43,6 +44,7 @@ INSTALLED_APPS = [
     "apps.bookings",
     "apps.billing",
     "apps.platform",
+    "apps.notifications",
     "apps.core",
 ]
 
@@ -251,6 +253,34 @@ CELERY_ACCEPT_CONTENT = ["json"]
 CELERY_TASK_SERIALIZER = "json"
 CELERY_RESULT_SERIALIZER = "json"
 CELERY_TIMEZONE = TIME_ZONE
+CELERY_BEAT_SCHEDULE = {
+    "enforce-dealer-email-verification": {
+        "task": "apps.accounts.tasks.enforce_dealer_email_verification",
+        "schedule": crontab(hour=0, minute=15),
+    },
+}
+
+EMAIL_BACKEND = os.getenv(
+    "DJANGO_EMAIL_BACKEND",
+    "django.core.mail.backends.console.EmailBackend",
+)
+DEFAULT_FROM_EMAIL = os.getenv(
+    "DJANGO_DEFAULT_FROM_EMAIL",
+    "Autoshowroom <no-reply@autoshowroom.local>",
+)
+DEALER_APP_URL = os.getenv("DEALER_APP_URL", "http://localhost:5173")
+DEALER_EMAIL_VERIFICATION_GRACE_DAYS = int(
+    os.getenv("DEALER_EMAIL_VERIFICATION_GRACE_DAYS", "7")
+)
+
+PAYSTACK_SECRET_KEY = os.getenv("PAYSTACK_SECRET_KEY", "")
+PAYSTACK_PUBLIC_KEY = os.getenv("PAYSTACK_PUBLIC_KEY", "")
+PAYMENT_CURRENCY = os.getenv("PAYMENT_CURRENCY", "NGN")
+PAYMENT_METHOD_VERIFICATION_NGN = int(os.getenv("PAYMENT_METHOD_VERIFICATION_NGN", "100"))
 
 BUYER_TOKEN_TTL_SECONDS = int(os.getenv("BUYER_TOKEN_TTL_SECONDS", "604800"))
 OTP_CODE_TTL_MINUTES = int(os.getenv("OTP_CODE_TTL_MINUTES", "10"))
+DEALER_SIGNUP_EXPOSE_OTP = os.getenv(
+    "DEALER_SIGNUP_EXPOSE_OTP",
+    "true" if DEBUG else "false",
+).lower() in {"1", "true", "yes", "on"}

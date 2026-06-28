@@ -4,21 +4,58 @@ from .models import BillingDispute, BillingPlan, Invoice, PaymentEvent, Subscrip
 
 
 class BillingPlanSerializer(serializers.ModelSerializer):
-    priceNgn = serializers.IntegerField(source="price_ngn")
-    listingLimit = serializers.IntegerField(source="listing_limit")
+    priceNgn = serializers.IntegerField(source="price_ngn", required=False)
+    listingLimit = serializers.IntegerField(source="listing_limit", required=False)
+    standLimit = serializers.IntegerField(source="stand_limit", required=False)
+    isActive = serializers.BooleanField(source="is_active", required=False)
+    activeDealerCount = serializers.IntegerField(read_only=True, required=False)
+    createdAt = serializers.DateTimeField(source="created_at", read_only=True)
+    updatedAt = serializers.DateTimeField(source="updated_at", read_only=True)
 
     class Meta:
         model = BillingPlan
-        fields = ["id", "name", "priceNgn", "listingLimit", "is_active", "features"]
+        fields = [
+            "id",
+            "name",
+            "priceNgn",
+            "listingLimit",
+            "standLimit",
+            "isActive",
+            "activeDealerCount",
+            "features",
+            "createdAt",
+            "updatedAt",
+        ]
 
 
 class SubscriptionSerializer(serializers.ModelSerializer):
     plan = BillingPlanSerializer(read_only=True)
+    pendingPlan = BillingPlanSerializer(source="pending_plan", read_only=True)
+    dealerId = serializers.UUIDField(source="dealer_id", read_only=True)
+    dealerName = serializers.CharField(source="dealer.name", read_only=True)
+    planName = serializers.CharField(source="plan.name", read_only=True)
+    amountNgn = serializers.IntegerField(source="plan.price_ngn", read_only=True)
     currentPeriodEnd = serializers.DateTimeField(source="current_period_end", read_only=True)
+    pendingPlanEffectiveAt = serializers.DateTimeField(source="pending_plan_effective_at", read_only=True)
+    createdAt = serializers.DateTimeField(source="created_at", read_only=True)
+    updatedAt = serializers.DateTimeField(source="updated_at", read_only=True)
 
     class Meta:
         model = Subscription
-        fields = ["id", "plan", "status", "currentPeriodEnd"]
+        fields = [
+            "id",
+            "dealerId",
+            "dealerName",
+            "plan",
+            "planName",
+            "pendingPlan",
+            "pendingPlanEffectiveAt",
+            "amountNgn",
+            "status",
+            "currentPeriodEnd",
+            "createdAt",
+            "updatedAt",
+        ]
 
 
 class InvoiceSerializer(serializers.ModelSerializer):
@@ -33,6 +70,15 @@ class InvoiceSerializer(serializers.ModelSerializer):
 
 class CheckoutSerializer(serializers.Serializer):
     planId = serializers.CharField(max_length=64)
+
+
+class CheckoutCompleteSerializer(serializers.Serializer):
+    planId = serializers.CharField(max_length=64)
+    reference = serializers.CharField(required=False, allow_blank=True)
+
+
+class PaymentMethodCompleteSerializer(serializers.Serializer):
+    reference = serializers.CharField(max_length=64)
 
 
 class DowngradeRequestSerializer(serializers.Serializer):
@@ -51,7 +97,9 @@ class PaystackWebhookSerializer(serializers.ModelSerializer):
 
 class BillingDisputeSerializer(serializers.ModelSerializer):
     dealerId = serializers.UUIDField(source="dealer_id")
+    dealerName = serializers.CharField(source="dealer.name", read_only=True)
     invoiceId = serializers.UUIDField(source="invoice_id", required=False, allow_null=True)
+    amountNgn = serializers.IntegerField(source="invoice.amount_ngn", read_only=True)
     createdAt = serializers.DateTimeField(source="created_at", read_only=True)
     updatedAt = serializers.DateTimeField(source="updated_at", read_only=True)
 
@@ -60,7 +108,9 @@ class BillingDisputeSerializer(serializers.ModelSerializer):
         fields = [
             "id",
             "dealerId",
+            "dealerName",
             "invoiceId",
+            "amountNgn",
             "reason",
             "note",
             "status",

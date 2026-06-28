@@ -267,3 +267,52 @@ class VehicleMedia(models.Model):
 
     def __str__(self) -> str:
         return f"{self.vehicle} {self.kind} {self.sort_order}"
+
+
+class VehicleReviewIssue(models.Model):
+    class Status(models.TextChoices):
+        OPEN = "open", "Open"
+        RESOLVED = "resolved", "Resolved"
+        APPROVED = "approved", "Approved"
+        DISMISSED = "dismissed", "Dismissed"
+
+    class Category(models.TextChoices):
+        DETAILS = "details", "Details"
+        PRICE = "price", "Price"
+        MEDIA = "media", "Media"
+        DOCUMENTS = "documents", "Documents"
+        COMPLIANCE = "compliance", "Compliance"
+        OTHER = "other", "Other"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    vehicle = models.ForeignKey(
+        Vehicle,
+        on_delete=models.CASCADE,
+        related_name="review_issues",
+    )
+    reviewer = models.ForeignKey(
+        "accounts.StaffUser",
+        on_delete=models.SET_NULL,
+        related_name="vehicle_review_issues",
+        null=True,
+        blank=True,
+    )
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.OPEN)
+    category = models.CharField(max_length=30, choices=Category.choices, default=Category.OTHER)
+    message = models.TextField()
+    dealer_response = models.TextField(null=True, blank=True)
+    vehicle_snapshot = models.JSONField(default=dict, blank=True)
+    resolved_at = models.DateTimeField(null=True, blank=True)
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["vehicle", "status"]),
+            models.Index(fields=["reviewer", "status"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.vehicle} {self.category} {self.status}"

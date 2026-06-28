@@ -5,7 +5,7 @@ from django.utils import timezone
 from rest_framework.test import APIClient
 
 from apps.accounts.models import StaffUser
-from apps.billing.models import BillingPlan
+from apps.billing.models import BillingPlan, Invoice, Subscription
 from apps.bookings.models import Appointment, Booking
 from apps.buyers.models import BuyerOtp, SavedVehicle, VehicleVisit
 from apps.dealers.models import Dealer, DealerLocation
@@ -174,6 +174,37 @@ class RemainingRoadmapTests(TestCase):
         appointment_response = self.client.get("/v1/appointments")
         self.assertEqual(appointment_response.status_code, 200)
         self.assertEqual(appointment_response.json()["data"]["count"], 1)
+        appointment_payload = appointment_response.json()["data"]["results"][0]
+        self.assertEqual(appointment_payload["status"], Booking.Status.CONFIRMED)
+        self.assertEqual(appointment_payload["locationName"], self.location.name)
+        self.assertEqual(appointment_payload["locationArea"], self.location.area)
+        self.assertEqual(appointment_payload["vehicleTitle"], "2020 Toyota Camry")
+        appointment_id = appointment_payload["id"]
+        booking = Booking.objects.get()
+
+        new_time = (timezone.now() + timedelta(days=3)).isoformat()
+        reschedule_response = self.client.patch(
+            f"/v1/appointments/{appointment_id}/reschedule",
+            {"scheduledAt": new_time},
+            format="json",
+        )
+        self.assertEqual(reschedule_response.status_code, 200)
+        booking.refresh_from_db()
+        appointment_refresh = Appointment.objects.get()
+        self.assertEqual(booking.status, Booking.Status.RESCHEDULED)
+        self.assertAlmostEqual(booking.scheduled_at.timestamp(), appointment_refresh.scheduled_at.timestamp(), delta=1)
+
+        confirm_response = self.client.patch(f"/v1/appointments/{appointment_id}/confirm", format="json")
+        self.assertEqual(confirm_response.status_code, 200)
+        booking.refresh_from_db()
+        self.assertEqual(booking.status, Booking.Status.CONFIRMED)
+        self.assertEqual(confirm_response.json()["data"]["status"], Booking.Status.CONFIRMED)
+
+        cancel_response = self.client.patch(f"/v1/appointments/{appointment_id}/cancel", format="json")
+        self.assertEqual(cancel_response.status_code, 204)
+        self.assertEqual(Appointment.objects.count(), 0)
+        booking.refresh_from_db()
+        self.assertEqual(booking.status, Booking.Status.CANCELLED)
 
     def test_billing_and_listing_limits(self):
         plan = BillingPlan.objects.create(
@@ -200,6 +231,18 @@ class RemainingRoadmapTests(TestCase):
             format="json",
         )
         self.assertEqual(checkout_response.status_code, 201)
+        checkout_reference = checkout_response.json()["data"]["reference"]
+
+        complete_response = self.client.post(
+            "/v1/billing/checkout/complete",
+            {"planId": plan.id, "reference": checkout_reference},
+            format="json",
+        )
+        self.assertEqual(complete_response.status_code, 201)
+        self.dealer.refresh_from_db()
+        self.assertEqual(self.dealer.plan_id, plan.id)
+        self.assertEqual(Subscription.objects.filter(dealer=self.dealer, status=Subscription.Status.ACTIVE).count(), 1)
+        self.assertEqual(Invoice.objects.filter(dealer=self.dealer, status=Invoice.Status.PAID).count(), 1)
 
         blocked_response = self.client.post(
             "/v1/vehicles",

@@ -9,6 +9,10 @@ from drf_spectacular.utils import (
 from apps.accounts.views import (
     AcceptStaffInvitationView,
     ChangePasswordView,
+    DealerSignupPasswordView,
+    DealerSignupSetupView,
+    DealerSignupStartView,
+    DealerSignupVerifyView,
     LoginView,
     RefreshView,
     SessionLocationView,
@@ -17,6 +21,10 @@ from apps.accounts.views import (
 from apps.accounts.serializers import (
     AcceptStaffInvitationSerializer,
     ChangePasswordSerializer,
+    DealerSignupPasswordSerializer,
+    DealerSignupSetupSerializer,
+    DealerSignupStartSerializer,
+    DealerSignupVerifySerializer,
     LoginSerializer,
     RefreshSerializer,
     SessionLocationSerializer,
@@ -183,6 +191,14 @@ token_pair_response = inline_serializer(
         "refreshToken": serializers.CharField(),
     },
 )
+dealer_signup_start_response = inline_serializer(
+    name="DealerSignupStartResponse",
+    fields={
+        "phone": serializers.CharField(),
+        "expiresAt": serializers.DateTimeField(),
+        "devCode": serializers.CharField(required=False),
+    },
+)
 login_response = inline_serializer(
     name="LoginResponse",
     fields={
@@ -266,18 +282,34 @@ buyer_token_response = inline_serializer(
 checkout_response = inline_serializer(
     name="CheckoutResponse",
     fields={
-        "checkoutUrl": serializers.URLField(),
+        "planId": serializers.CharField(),
         "reference": serializers.CharField(),
-        "subscription": SubscriptionSerializer(),
+        "fullyCovered": serializers.BooleanField(),
+        "publicKey": serializers.CharField(required=False),
+        "email": serializers.EmailField(required=False),
+        "amountNgn": serializers.IntegerField(required=False),
+        "amountKobo": serializers.IntegerField(required=False),
+        "listPriceNgn": serializers.IntegerField(required=False),
+        "creditAppliedNgn": serializers.IntegerField(required=False),
+        "checkoutKind": serializers.CharField(required=False),
+        "currency": serializers.CharField(required=False),
+        "callbackUrl": serializers.URLField(required=False),
+        "metadata": serializers.DictField(required=False),
     },
 )
 billing_summary_response = inline_serializer(
     name="BillingSummaryResponse",
     fields={
         "subscription": SubscriptionSerializer(allow_null=True),
+        "pendingDowngrade": serializers.DictField(allow_null=True),
+        "paymentMethod": serializers.DictField(allow_null=True),
         "listingLimit": serializers.IntegerField(),
         "activeListings": serializers.IntegerField(),
         "canPublish": serializers.BooleanField(),
+        "standLimit": serializers.IntegerField(),
+        "standCount": serializers.IntegerField(),
+        "canAddStand": serializers.BooleanField(),
+        "vehicleCount": serializers.IntegerField(),
     },
 )
 invoice_pdf_response = inline_serializer(
@@ -380,6 +412,31 @@ upload_response = inline_serializer(
 login_example = example(
     "Dealer staff login",
     {"email": "owner@example.com", "password": "strong-pass-123"},
+)
+dealer_signup_start_example = example(
+    "Start dealer phone verification",
+    {"phone": "+2348070000000"},
+)
+dealer_signup_verify_example = example(
+    "Verify phone and enter console",
+    {
+        "phone": "+2348070000000",
+        "code": "123456",
+    },
+)
+dealer_signup_setup_example = example(
+    "Complete dealership details",
+    {
+        "dealerName": "Prime Motors",
+        "email": "owner@example.com",
+        "standName": "Main Stand",
+        "districtSlug": "wuse",
+        "address": "Plot 12, Wuse, Abuja",
+    },
+)
+dealer_signup_password_example = example(
+    "Set secure login password",
+    {"password": "strong-pass-123", "confirmPassword": "strong-pass-123"},
 )
 refresh_example = example("Refresh token", {"refreshToken": "eyJhbGciOi..."})
 password_example = example(
@@ -544,6 +601,38 @@ paystack_webhook_example = example(
 
 health_check = extend_schema(tags=["Core"], summary="Health check", responses={200: status_response})(health_check)
 
+DealerSignupStartView.post = extend_schema(
+    tags=["Auth"],
+    summary="Start dealer owner phone verification",
+    description="Creates a short-lived phone verification code for a new dealer owner registration.",
+    request=DealerSignupStartSerializer,
+    responses={201: dealer_signup_start_response},
+    examples=[dealer_signup_start_example],
+)(DealerSignupStartView.post)
+DealerSignupVerifyView.post = extend_schema(
+    tags=["Auth"],
+    summary="Verify dealer phone and enter console",
+    description="Verifies the phone code, creates a provisional dealer account plus owner staff session, and returns dealer staff JWTs.",
+    request=DealerSignupVerifySerializer,
+    responses={201: login_response},
+    examples=[dealer_signup_verify_example],
+)(DealerSignupVerifyView.post)
+DealerSignupSetupView.patch = extend_schema(
+    tags=["Auth"],
+    summary="Complete dealer onboarding details",
+    description="Updates the provisional dealer account with dealership name, verified email, and initial stand details.",
+    request=DealerSignupSetupSerializer,
+    responses={200: login_response},
+    examples=[dealer_signup_setup_example],
+)(DealerSignupSetupView.patch)
+DealerSignupPasswordView.patch = extend_schema(
+    tags=["Auth"],
+    summary="Set secure dealer login password",
+    description="Sets the owner password after the dealership details step so future sign-in uses verified email and password.",
+    request=DealerSignupPasswordSerializer,
+    responses={200: ok_response},
+    examples=[dealer_signup_password_example],
+)(DealerSignupPasswordView.patch)
 LoginView.post = extend_schema(
     tags=["Auth"],
     summary="Log in dealer staff",

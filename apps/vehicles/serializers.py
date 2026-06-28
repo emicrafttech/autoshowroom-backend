@@ -4,7 +4,20 @@ from rest_framework import serializers
 from apps.dealers.models import DealerLocation
 
 from .catalog import normalize_make
-from .models import Vehicle, VehicleMedia
+from .models import Vehicle, VehicleMedia, VehicleReviewIssue
+
+
+def unique_vehicle_slug_for_dealer(dealer_id, base_slug: str) -> str:
+    slug = base_slug[:160] or "vehicle"
+    candidate = slug
+    suffix = 2
+
+    while Vehicle.objects.filter(dealer_id=dealer_id, slug=candidate).exists():
+        suffix_text = f"-{suffix}"
+        candidate = f"{slug[:160 - len(suffix_text)]}{suffix_text}"
+        suffix += 1
+
+    return candidate
 
 
 class VehicleMediaSerializer(serializers.ModelSerializer):
@@ -52,6 +65,7 @@ class VehicleMediaSerializer(serializers.ModelSerializer):
 
 class VehicleSerializer(serializers.ModelSerializer):
     dealerId = serializers.UUIDField(source="dealer_id", read_only=True)
+    dealerName = serializers.CharField(source="dealer.name", read_only=True)
     locationId = serializers.UUIDField(source="location_id", required=False)
     coverMediaId = serializers.UUIDField(
         source="cover_media_id",
@@ -160,6 +174,8 @@ class VehicleSerializer(serializers.ModelSerializer):
         source="listing_rejected_reason",
         read_only=True,
     )
+    reviewIssues = serializers.SerializerMethodField()
+    openReviewIssueCount = serializers.SerializerMethodField()
     feedReady = serializers.BooleanField(source="feed_ready", read_only=True)
     refreshedAt = serializers.DateTimeField(source="refreshed_at", read_only=True)
     createdAt = serializers.DateTimeField(source="created_at", read_only=True)
@@ -170,6 +186,7 @@ class VehicleSerializer(serializers.ModelSerializer):
         fields = [
             "id",
             "dealerId",
+            "dealerName",
             "locationId",
             "coverMediaId",
             "coverMedia",
@@ -209,6 +226,8 @@ class VehicleSerializer(serializers.ModelSerializer):
             "dealerAttestationAt",
             "listingApprovedAt",
             "listingRejectedReason",
+            "reviewIssues",
+            "openReviewIssueCount",
             "feedReady",
             "refreshedAt",
             "createdAt",
@@ -220,6 +239,13 @@ class VehicleSerializer(serializers.ModelSerializer):
             "notes": {"required": False, "allow_null": True, "allow_blank": True},
             "vin": {"required": False, "allow_null": True, "allow_blank": True},
         }
+
+    def get_reviewIssues(self, obj):
+        issues = obj.review_issues.all()
+        return VehicleReviewIssueSerializer(issues, many=True, context=self.context).data
+
+    def get_openReviewIssueCount(self, obj):
+        return obj.review_issues.filter(status=VehicleReviewIssue.Status.OPEN).count()
 
     def validate(self, attrs):
         attrs = super().validate(attrs)
@@ -275,10 +301,34 @@ class VehicleSerializer(serializers.ModelSerializer):
         if "make" in attrs:
             attrs["make"] = normalize_make(attrs["make"])
         if "slug" not in attrs and not self.instance:
-            attrs["slug"] = slugify(
+            base_slug = slugify(
                 f"{attrs.get('year')} {attrs.get('make')} {attrs.get('model')} {attrs.get('trim')}"
             )
+            attrs["slug"] = unique_vehicle_slug_for_dealer(dealer_id, base_slug)
         return attrs
+
+    def update(self, instance, validated_data):
+        changed_fields = {
+            field
+            for field, value in validated_data.items()
+            if field not in {"cover_media"} and getattr(instance, field, None) != value
+        }
+        instance = super().update(instance, validated_data)
+        if (
+            changed_fields
+            and instance.listing_verification_status
+            == Vehicle.ListingVerificationStatus.REJECTED
+            and instance.review_issues.filter(
+                status=VehicleReviewIssue.Status.RESOLVED,
+            ).exists()
+        ):
+            instance.listing_verification_status = Vehicle.ListingVerificationStatus.PENDING_REVIEW
+            instance.feed_ready = False
+            instance.save(update_fields=["listing_verification_status", "feed_ready", "updated_at"])
+            from apps.notifications.platform_notifications import notify_listing_review_submitted
+
+            notify_listing_review_submitted(instance)
+        return instance
 
 
 class VehicleStatusSerializer(serializers.Serializer):
@@ -300,11 +350,96 @@ class VehicleStatusSerializer(serializers.Serializer):
         return attrs
 
 
+class VehicleReviewIssueInputSerializer(serializers.Serializer):
+    category = serializers.ChoiceField(
+        choices=VehicleReviewIssue.Category.choices,
+        default=VehicleReviewIssue.Category.OTHER,
+    )
+    message = serializers.CharField()
+
+    def validate_message(self, value):
+        message = value.strip()
+        if not message:
+            raise serializers.ValidationError("Issue message is required.")
+        return message
+
+
 class VehicleReviewDecisionSerializer(serializers.Serializer):
     reason = serializers.CharField(required=False, allow_blank=True)
+    issues = VehicleReviewIssueInputSerializer(many=True, required=False)
 
     def validate_reason(self, value):
         return value.strip()
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        if not attrs.get("reason") and not attrs.get("issues"):
+            raise serializers.ValidationError("Provide a review reason or at least one issue.")
+        return attrs
+
+
+class VehicleReviewIssueSerializer(serializers.ModelSerializer):
+    vehicleId = serializers.UUIDField(source="vehicle_id", read_only=True)
+    reviewerId = serializers.UUIDField(source="reviewer_id", read_only=True)
+    reviewerName = serializers.CharField(source="reviewer.name", read_only=True)
+    dealerResponse = serializers.CharField(source="dealer_response", read_only=True)
+    vehicleSnapshot = serializers.JSONField(source="vehicle_snapshot", read_only=True)
+    vehicleChanges = serializers.SerializerMethodField()
+    resolvedAt = serializers.DateTimeField(source="resolved_at", read_only=True)
+    reviewedAt = serializers.DateTimeField(source="reviewed_at", read_only=True)
+    createdAt = serializers.DateTimeField(source="created_at", read_only=True)
+    updatedAt = serializers.DateTimeField(source="updated_at", read_only=True)
+
+    class Meta:
+        model = VehicleReviewIssue
+        fields = [
+            "id",
+            "vehicleId",
+            "reviewerId",
+            "reviewerName",
+            "status",
+            "category",
+            "message",
+            "dealerResponse",
+            "vehicleSnapshot",
+            "vehicleChanges",
+            "resolvedAt",
+            "reviewedAt",
+            "createdAt",
+            "updatedAt",
+        ]
+        read_only_fields = fields
+
+    def get_vehicleChanges(self, obj):
+        snapshot = obj.vehicle_snapshot or {}
+        vehicle = obj.vehicle
+        current = {
+            "make": vehicle.make,
+            "model": vehicle.model,
+            "year": vehicle.year,
+            "trim": vehicle.trim,
+            "priceNgn": vehicle.price_ngn,
+            "mileageKm": vehicle.mileage_km,
+            "status": vehicle.status,
+            "listingVerificationStatus": vehicle.listing_verification_status,
+            "mediaCount": vehicle.media_items.count(),
+            "updatedAt": vehicle.updated_at.isoformat() if vehicle.updated_at else None,
+        }
+        return {
+            key: {"before": snapshot.get(key), "after": value}
+            for key, value in current.items()
+            if snapshot.get(key) != value
+        }
+
+
+class VehicleReviewIssueResolveSerializer(serializers.Serializer):
+    dealerResponse = serializers.CharField()
+
+    def validate_dealerResponse(self, value):
+        response = value.strip()
+        if not response:
+            raise serializers.ValidationError("Add a response explaining what was fixed.")
+        return response
 
 
 class VehicleMediaUploadItemSerializer(serializers.Serializer):

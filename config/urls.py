@@ -23,5 +23,6 @@ urlpatterns = [
     path("v1/", include("apps.bookings.urls")),
     path("v1/", include("apps.billing.urls")),
     path("v1/", include("apps.platform.urls")),
+    path("v1/", include("apps.notifications.urls")),
     path("v1/", include("apps.vehicles.urls")),
 ]

@@ -113,6 +113,7 @@ class DealerLocation(models.Model):
     premises_verified_at = models.DateTimeField(null=True, blank=True)
     premises_rejected_at = models.DateTimeField(null=True, blank=True)
     premises_rejection_reason = models.TextField(null=True, blank=True)
+    evidence_files = models.JSONField(default=list, blank=True)
     geo_changed_at = models.DateTimeField(null=True, blank=True)
     pending_geo = models.JSONField(null=True, blank=True)
     premises_rejection_count = models.PositiveIntegerField(default=0)
@@ -141,6 +142,11 @@ class DealerVerificationDocument(models.Model):
         PREMISES = "premises", "Premises"
         OTHER = "other", "Other"
 
+    class Status(models.TextChoices):
+        PENDING = "pending", "Pending"
+        APPROVED = "approved", "Approved"
+        REJECTED = "rejected", "Rejected"
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     dealer = models.ForeignKey(
         Dealer,
@@ -150,6 +156,9 @@ class DealerVerificationDocument(models.Model):
     kind = models.CharField(max_length=40, choices=Kind.choices, default=Kind.OTHER)
     title = models.CharField(max_length=160)
     file_url = models.URLField(max_length=1000)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
+    rejection_reason = models.TextField(null=True, blank=True)
+    reviewed_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
