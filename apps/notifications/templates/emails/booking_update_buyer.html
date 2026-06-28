@@ -1,0 +1,30 @@
+{% extends "emails/base.html" %}
+
+{% block title %}{{ headline }} · {{ brand_name }}{% endblock %}
+
+{% block hero %}
+<div class="hero">
+  <div class="icon-circle">{{ status_icon }}</div>
+  <h1 class="title">{{ headline }}</h1>
+  <p class="subtitle">{{ subtitle }}</p>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="card">
+  <div class="card-body">
+    <p class="card-row"><strong>Vehicle:</strong> {{ vehicle_title }}</p>
+    <p class="card-row"><strong>When:</strong> {{ scheduled_at_display }}</p>
+    <p class="card-row"><strong>Where:</strong> {{ location_label }}</p>
+  </div>
+</div>
+{% endblock %}
+
+{% block actions %}
+{% if show_actions %}
+<div class="actions">
+  {% if calendar_url %}<a class="btn-primary" href="{{ calendar_url }}">Add to calendar</a>{% endif %}
+  {% if directions_url %}<a class="btn-secondary" href="{{ directions_url }}">Get directions</a>{% endif %}
+</div>
+{% endif %}
+{% endblock %}

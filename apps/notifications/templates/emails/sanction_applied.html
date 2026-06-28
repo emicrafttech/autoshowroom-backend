@@ -1,0 +1,33 @@
+{% extends "emails/base.html" %}
+
+{% block title %}Account sanction · {{ brand_name }}{% endblock %}
+
+{% block hero %}
+<div class="hero">
+  <p class="eyebrow">Trust &amp; safety</p>
+  <h1 class="title">A sanction was applied to {{ dealer_name }}</h1>
+  <p class="subtitle">
+    Your dealership account has an active sanction. Review the details and next
+    steps below.
+  </p>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="card">
+  <div class="card-body">
+    <p class="card-title">Reason</p>
+    <p class="card-text">{{ reason }}</p>
+  </div>
+</div>
+<p class="note">
+  You can submit an appeal from your dealer workspace if you believe this was
+  applied in error.
+</p>
+{% endblock %}
+
+{% block actions %}
+<div class="actions">
+  <a class="btn-primary" href="{{ account_url }}">View account status</a>
+</div>
+{% endblock %}

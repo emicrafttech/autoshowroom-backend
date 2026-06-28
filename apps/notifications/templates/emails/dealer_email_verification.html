@@ -1,0 +1,58 @@
+{% extends "emails/base.html" %}
+
+{% block title %}Confirm your email · {{ brand_name }}{% endblock %}
+
+{% block hero %}
+<div class="hero">
+  <p class="eyebrow">Welcome aboard</p>
+  <h1 class="title">Confirm your email to start selling cars</h1>
+  <p class="subtitle">
+    Hi {{ recipient_name }}, you're one step away from listing your inventory on
+    {{ brand_name }} — Nigeria's marketplace for trusted dealers.
+  </p>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="content">
+  <p>
+    Verify your email address to activate <strong>{{ dealer_name }}</strong> and
+    reach buyers today.
+  </p>
+  <p class="muted">
+    This link expires in {{ expiry_hours }} hours. Didn't sign up? You can
+    safely ignore this email.
+  </p>
+  <p class="muted link-break">Or copy this link: {{ verify_url }}</p>
+</div>
+{% endblock %}
+
+{% block actions %}
+<div class="actions">
+  <a class="btn-primary" href="{{ verify_url }}">Verify email address</a>
+</div>
+{% endblock %}
+
+{% block extra %}
+<div class="card">
+  <div class="card-body">
+    <p class="eyebrow">What's next</p>
+    <ul class="step-list">
+      <li class="step-item">
+        <span class="step-number">1</span>
+        Complete your dealer verification
+      </li>
+      <li class="step-item">
+        <span class="step-number">2</span>
+        Add your first vehicle with photos
+      </li>
+      <li class="step-item">
+        <span class="step-number">3</span>
+        Start receiving buyer leads
+      </li>
+    </ul>
+  </div>
+</div>
+{% endblock %}
+
+{% block footer_links %} · Questions? Reply to {{ support_email }}{% endblock %}

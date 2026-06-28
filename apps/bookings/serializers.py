@@ -70,6 +70,9 @@ class BookingSerializer(serializers.ModelSerializer):
                 "notes": booking.notes,
             },
         )
+        from apps.notifications.services import notify_booking_confirmed
+
+        notify_booking_confirmed(booking)
         return booking
 
 

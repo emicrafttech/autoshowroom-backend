@@ -164,7 +164,7 @@ class CsvCoverageCompletionTests(TestCase):
             capabilities=["session.read", "platform_users.read"],
         )
 
-        with patch("apps.platform.views.send_mail") as send_mail:
+        with patch("apps.notifications.services.notify_staff_invite") as send_invite:
             response = self.client.post(
                 "/v1/platform/users",
                 {
@@ -183,7 +183,7 @@ class CsvCoverageCompletionTests(TestCase):
         self.assertTrue(invited.invite_pending)
         self.assertEqual(response.json()["data"]["roleName"], "Trust Ops")
         self.assertEqual(response.json()["data"]["roleCapabilities"], ["platform_users.read", "session.read"])
-        send_mail.assert_called_once()
+        send_invite.assert_called_once()
 
     def test_platform_user_invite_requires_write_permission(self):
         role = PlatformRole.objects.create(
@@ -475,7 +475,7 @@ class CsvCoverageCompletionTests(TestCase):
     def test_platform_can_message_dealer_by_email_and_notification(self):
         self.client.force_authenticate(self.platform_user)
 
-        with patch("apps.platform.views.send_mail") as send_mail:
+        with patch("apps.notifications.services.notify_platform_dealer_message") as send_message:
             response = self.client.post(
                 f"/v1/platform/dealers/{self.dealer.id}/message",
                 {"message": "Please update your KYD submission."},
@@ -488,7 +488,7 @@ class CsvCoverageCompletionTests(TestCase):
         self.assertEqual(notification.recipient, self.staff)
         self.assertEqual(notification.type, DealerNotification.Type.PLATFORM_MESSAGE)
         self.assertEqual(notification.body, "Please update your KYD submission.")
-        send_mail.assert_called_once()
+        send_message.assert_called_once()
         self.assertTrue(AuditLog.objects.filter(action="dealer.message_sent").exists())
 
     def test_platform_verification_request_info_keeps_cases_pending(self):

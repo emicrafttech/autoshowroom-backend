@@ -1,0 +1,31 @@
+{% extends "emails/base.html" %}
+
+{% block title %}New inspection booking · {{ brand_name }}{% endblock %}
+
+{% block header_badge %}<span class="badge">New booking</span>{% endblock %}
+
+{% block hero %}
+<div class="hero hero-top">
+  <h1 class="title">{{ buyer_name }} booked an inspection</h1>
+  <p class="subtitle">
+    A buyer scheduled a visit for <strong>{{ vehicle_short_title }}</strong>.
+    Confirm details in your workspace.
+  </p>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="card">
+  <div class="card-body">
+    <p class="card-row"><strong>When:</strong> {{ scheduled_at_display }}</p>
+    <p class="card-row"><strong>Buyer:</strong> {{ buyer_name }} · {{ buyer_phone }}</p>
+    <p class="card-row"><strong>Vehicle:</strong> {{ vehicle_title }} · {{ vehicle_price }}</p>
+  </div>
+</div>
+{% endblock %}
+
+{% block actions %}
+<div class="actions">
+  <a class="btn-primary" href="{{ bookings_url }}">View bookings</a>
+</div>
+{% endblock %}

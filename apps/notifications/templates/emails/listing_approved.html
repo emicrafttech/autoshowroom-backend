@@ -1,0 +1,40 @@
+{% extends "emails/base.html" %}
+
+{% block title %}Listing approved · {{ brand_name }}{% endblock %}
+
+{% block hero %}
+<div class="hero">
+  <div class="icon-circle">✓</div>
+  <h1 class="title">Your listing is live</h1>
+  <p class="subtitle">
+    <strong>{{ vehicle_title }}</strong> passed review and is now visible to
+    buyers on {{ brand_name }}.
+  </p>
+</div>
+{% endblock %}
+
+{% block content %}
+{% if vehicle_image_url %}
+<div class="hero-media">
+  <img src="{{ vehicle_image_url }}" alt="{{ vehicle_title }}" width="536" />
+  <div class="hero-media-caption">
+    <span class="hero-media-title">{{ vehicle_title }}</span>
+    <span class="hero-media-price">{{ vehicle_price }}</span>
+  </div>
+</div>
+{% else %}
+<div class="card">
+  <div class="card-body">
+    <p class="vehicle-title">{{ vehicle_title }}</p>
+    <p class="vehicle-specs">{{ vehicle_specs }}</p>
+    <p class="price">{{ vehicle_price }}</p>
+  </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block actions %}
+<div class="actions">
+  <a class="btn-primary" href="{{ stock_url }}">View listing</a>
+</div>
+{% endblock %}

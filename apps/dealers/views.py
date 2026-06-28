@@ -242,6 +242,14 @@ class DealerStaffViewSet(EnvelopeMixin, viewsets.ModelViewSet):
                 )
         serializer.save()
 
+    def perform_create(self, serializer):
+        user = serializer.save()
+        token = getattr(user, "inviteToken", None)
+        if token:
+            from apps.notifications.services import notify_staff_invite
+
+            notify_staff_invite(user, token, portal="dealer")
+
     @action(detail=True, methods=["post"], url_path="resend-invite")
     def resend_invite(self, request, pk=None):
         user = self.get_object()
@@ -258,6 +266,9 @@ class DealerStaffViewSet(EnvelopeMixin, viewsets.ModelViewSet):
             ]
         )
         user.inviteToken = token
+        from apps.notifications.services import notify_staff_invite
+
+        notify_staff_invite(user, token, portal="dealer")
         return Response(DealerStaffSerializer(user).data)
 
 
@@ -462,6 +473,9 @@ class DealerVerificationViewSet(EnvelopeMixin, viewsets.ReadOnlyModelViewSet):
         dealer.verified_at = timezone.now()
         dealer.save(update_fields=["verification_status", "verified_badge", "verified_at", "updated_at"])
         write_audit(request.user, "dealer.verification.approved", dealer)
+        from apps.notifications.services import notify_dealer_verification_approved
+
+        notify_dealer_verification_approved(dealer)
         return Response(self.get_serializer(dealer).data)
 
     @action(detail=True, methods=["patch"], url_path="verification/reject")
@@ -474,6 +488,9 @@ class DealerVerificationViewSet(EnvelopeMixin, viewsets.ReadOnlyModelViewSet):
         dealer.verified_badge = False
         dealer.save(update_fields=["verification_status", "verified_badge", "updated_at"])
         write_audit(request.user, "dealer.verification.rejected", dealer, {"reason": reason})
+        from apps.notifications.services import notify_dealer_verification_rejected
+
+        notify_dealer_verification_rejected(dealer, reason)
         return Response(self.get_serializer(dealer).data)
 
     @action(detail=True, methods=["patch"], url_path="verification/request-info")
@@ -483,4 +500,7 @@ class DealerVerificationViewSet(EnvelopeMixin, viewsets.ReadOnlyModelViewSet):
         if not reason:
             raise ValidationError({"reason": "A request reason is required."})
         write_audit(request.user, "dealer.verification.info_requested", dealer, {"reason": reason})
+        from apps.notifications.services import notify_dealer_verification_info_requested
+
+        notify_dealer_verification_info_requested(dealer, reason)
         return Response(self.get_serializer(dealer).data)

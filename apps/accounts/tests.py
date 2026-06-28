@@ -408,7 +408,9 @@ class AuthDealerFoundationTests(TestCase):
         self.authenticate()
 
         token = "email-token-with-enough-length"
-        with patch("apps.accounts.views.generate_invite_token", return_value=token), patch("apps.accounts.views.send_mail") as send_mail:
+        with patch("apps.notifications.email_verification.generate_invite_token", return_value=token), patch(
+            "apps.notifications.tasks.send_dealer_email_verification_email.delay"
+        ) as send_email:
             send_response = self.client.post("/v1/auth/email-verification/send", {}, format="json")
 
         self.assertEqual(send_response.status_code, 200)
@@ -417,7 +419,7 @@ class AuthDealerFoundationTests(TestCase):
         self.user.refresh_from_db()
         self.assertIsNotNone(self.user.email_verification_token_hash)
         self.assertIsNotNone(self.user.email_verification_sent_at)
-        send_mail.assert_called_once()
+        send_email.assert_called_once()
 
         verify_response = self.client.post(
             "/v1/auth/email-verification/verify",
@@ -557,7 +559,7 @@ class AuthDealerFoundationTests(TestCase):
         profile_response = self.client.get("/v1/dealers/me")
         self.assertEqual(profile_response.status_code, 200)
 
-        with patch("apps.accounts.views.send_mail"):
+        with patch("apps.notifications.tasks.send_dealer_email_verification_email.delay"):
             resend_response = self.client.post("/v1/auth/email-verification/send", {}, format="json")
         self.assertEqual(resend_response.status_code, 200)
 
@@ -576,7 +578,9 @@ class AuthDealerFoundationTests(TestCase):
         self.authenticate()
 
         token = "email-token-with-enough-length"
-        with patch("apps.accounts.views.generate_invite_token", return_value=token), patch("apps.accounts.views.send_mail"):
+        with patch("apps.notifications.email_verification.generate_invite_token", return_value=token), patch(
+            "apps.notifications.email_verification.send_dealer_email_verification_email.delay"
+        ):
             send_response = self.client.post("/v1/auth/email-verification/send", {}, format="json")
         verify_response = self.client.post(
             "/v1/auth/email-verification/verify",

@@ -100,6 +100,9 @@ class VehicleChatListCreateView(EnvelopeMixin, APIView):
             conversation.last_message_at = timezone.now()
             conversation.save(update_fields=["last_message_at", "updated_at"])
             broadcast_chat_message(chat_message)
+            from apps.notifications.services import notify_buyer_chat_message
+
+            notify_buyer_chat_message(chat_message)
         return Response(BuyerConversationSerializer(conversation).data, status=status.HTTP_201_CREATED)
 
 
@@ -134,4 +137,8 @@ class VehicleChatMessageCreateView(EnvelopeMixin, APIView):
             conversation.last_message_at = timezone.now()
             conversation.save(update_fields=["last_message_at", "updated_at"])
             broadcast_chat_message(chat_message)
+            if chat_message.sender_type == BuyerMessage.SenderType.BUYER:
+                from apps.notifications.services import notify_buyer_chat_message
+
+                notify_buyer_chat_message(chat_message)
         return Response(BuyerConversationSerializer(conversation).data, status=status.HTTP_201_CREATED)

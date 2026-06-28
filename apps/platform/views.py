@@ -2,7 +2,6 @@ from datetime import datetime, time, timedelta
 
 from django.contrib.auth import authenticate
 from django.conf import settings
-from django.core.mail import send_mail
 from django.db.models import Count, Q
 from django.shortcuts import get_object_or_404
 from django.utils.dateparse import parse_date
@@ -232,6 +231,12 @@ class DealerSanctionViewSet(AuditedModelViewSet):
     read_capability = "sanctions.read"
     write_capability = "sanctions.write"
 
+    def perform_create(self, serializer):
+        super().perform_create(serializer)
+        from apps.notifications.services import notify_sanction_applied
+
+        notify_sanction_applied(serializer.instance)
+
     @action(detail=True, methods=["patch"], url_path="lift")
     def lift(self, request, pk=None):
         sanction = self.get_object()
@@ -285,14 +290,9 @@ class PlatformUserViewSet(AuditedModelViewSet):
                 "updated_at",
             ]
         )
-        invite_url = f"{getattr(settings, 'FRONTEND_URL', 'http://localhost:5174')}/invite?token={token}"
-        send_mail(
-            "You have been invited to Auto Showroom Platform Admin",
-            f"Open this link to accept your Platform Admin invite: {invite_url}",
-            getattr(settings, "DEFAULT_FROM_EMAIL", "no-reply@autoshowroom.local"),
-            [user.email],
-            fail_silently=False,
-        )
+        from apps.notifications.services import notify_staff_invite
+
+        notify_staff_invite(user, token, portal="platform")
         write_audit(self.request.user, "platform_user.created", user)
 
 
@@ -358,6 +358,9 @@ class SanctionAppealViewSet(AuditedModelViewSet):
                 appeal,
                 {"sanctionId": str(appeal.sanction_id) if appeal.sanction_id else None},
             )
+            from apps.notifications.services import notify_sanction_appeal_outcome
+
+            notify_sanction_appeal_outcome(appeal)
         return response
 
 
@@ -623,14 +626,9 @@ class PlatformDealerMessageView(EnvelopeMixin, APIView):
                 for recipient in recipients
             ]
         )
-        for recipient in recipients:
-            send_mail(
-                subject,
-                message,
-                getattr(settings, "DEFAULT_FROM_EMAIL", "no-reply@autoshowroom.local"),
-                [recipient.email],
-                fail_silently=False,
-            )
+        from apps.notifications.services import notify_platform_dealer_message
+
+        notify_platform_dealer_message(dealer, subject, message)
         write_audit(request.user, "dealer.message_sent", dealer, {"recipientCount": len(notifications)})
         return Response({"sent": len(notifications), "dealerId": str(dealer.id)})
 

@@ -332,6 +332,24 @@ class PaystackWebhookView(EnvelopeMixin, APIView):
                 handle_payment_method_success(reference, metadata)
             else:
                 handle_charge_success(reference, metadata)
+        elif event_type == "charge.failed":
+            metadata = data.get("metadata") or {}
+            dealer_id = metadata.get("dealer_id")
+            plan_id = metadata.get("plan_id")
+            if dealer_id and plan_id:
+                from apps.dealers.models import Dealer
+                from apps.notifications.services import notify_payment_failed
+
+                dealer = Dealer.objects.filter(id=dealer_id).first()
+                plan = BillingPlan.objects.filter(id=plan_id).first()
+                if dealer and plan:
+                    notify_payment_failed(
+                        dealer,
+                        plan_name=plan.name,
+                        amount_ngn=plan.price_ngn,
+                        failure_reason=data.get("gateway_response") or data.get("message") or "Payment failed.",
+                        reference=reference,
+                    )
 
         return Response({"eventId": str(event.id)}, status=status.HTTP_202_ACCEPTED)
 

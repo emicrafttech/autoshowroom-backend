@@ -1,0 +1,29 @@
+{% extends "emails/base.html" %}
+
+{% block title %}Listing review issue · {{ brand_name }}{% endblock %}
+
+{% block hero %}
+<div class="hero">
+  <p class="eyebrow">Listing review</p>
+  <h1 class="title">Action needed on your listing</h1>
+  <p class="subtitle">
+    A reviewer flagged an issue on <strong>{{ vehicle_title }}</strong>. Update
+    the listing and resubmit for review.
+  </p>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="card">
+  <div class="card-body">
+    <p class="card-title">Issue details</p>
+    <p class="card-text">{{ issue_message }}</p>
+  </div>
+</div>
+{% endblock %}
+
+{% block actions %}
+<div class="actions">
+  <a class="btn-primary" href="{{ stock_url }}">Review listing</a>
+</div>
+{% endblock %}

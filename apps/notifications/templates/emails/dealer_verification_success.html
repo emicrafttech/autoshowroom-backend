@@ -1,0 +1,47 @@
+{% extends "emails/base.html" %}
+
+{% block title %}{{ dealer_name }} is verified · {{ brand_name }}{% endblock %}
+
+{% block hero %}
+<div class="hero">
+  <div class="icon-circle">🛡</div>
+  <h1 class="title">{{ dealer_name }} is now verified</h1>
+  <p class="subtitle">
+    Congratulations — your dealership passed verification. The Verified Dealer
+    badge now appears on your stand and every listing.
+  </p>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="card">
+  <div class="card-body">
+    <p class="benefit-item">
+      <span class="benefit-check">✓</span>
+      <strong>Higher search ranking</strong> — verified listings appear above
+      unverified ones.
+    </p>
+    <p class="benefit-item">
+      <span class="benefit-check">✓</span>
+      <strong>More buyer trust</strong> — the badge reassures buyers you're a
+      real, vetted dealer.
+    </p>
+    <p class="benefit-item">
+      <span class="benefit-check">✓</span>
+      <strong>Featured listing slots</strong> — unlock promoted placement on the
+      homepage.
+    </p>
+  </div>
+</div>
+<p class="note">
+  Verification level: Verified dealer{% if verified_at %} · Approved {{ verified_at }}{% endif %}
+</p>
+{% endblock %}
+
+{% block actions %}
+<div class="actions">
+  <a class="btn-primary" href="{{ stand_url }}">View your stand</a>
+</div>
+{% endblock %}
+
+{% block footer_links %} · <a href="{{ account_url }}">Manage account</a>{% endblock %}

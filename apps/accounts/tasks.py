@@ -12,6 +12,31 @@ EMAIL_SUSPENSION_REASON = "Email verification overdue."
 
 
 @shared_task
+def send_dealer_email_verification_reminders() -> dict[str, int]:
+    grace_days = getattr(settings, "DEALER_EMAIL_VERIFICATION_GRACE_DAYS", 7)
+    reminder_days_before = getattr(settings, "EMAIL_VERIFICATION_REMINDER_DAYS_BEFORE", 1)
+    reminder_cutoff = timezone.now() - timedelta(days=max(grace_days - reminder_days_before, 0))
+    suspension_cutoff = timezone.now() - timedelta(days=grace_days)
+
+    owners = StaffUser.objects.filter(
+        role=StaffUser.Role.OWNER,
+        dealer__operational_status=Dealer.OperationalStatus.ACTIVE,
+        email_verified_at__isnull=True,
+        email_verification_required_at__isnull=False,
+        email_verification_required_at__lte=reminder_cutoff,
+        email_verification_required_at__gt=suspension_cutoff,
+    ).exclude(email__endswith="@pending.autoshowroom.local")
+
+    from apps.notifications.services import notify_email_verification_reminder
+
+    sent = 0
+    for owner in owners:
+        notify_email_verification_reminder(owner)
+        sent += 1
+    return {"reminded": sent}
+
+
+@shared_task
 def enforce_dealer_email_verification() -> dict[str, int]:
     grace_days = getattr(settings, "DEALER_EMAIL_VERIFICATION_GRACE_DAYS", 7)
     cutoff = timezone.now() - timedelta(days=grace_days)

@@ -1,0 +1,26 @@
+{% extends "emails/base.html" %}
+
+{% block title %}Appeal update · {{ brand_name }}{% endblock %}
+
+{% block hero %}
+<div class="hero">
+  <div class="icon-circle">{{ status_icon }}</div>
+  <h1 class="title">{{ headline }}</h1>
+  <p class="subtitle">{{ subtitle }}</p>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="card">
+  <div class="card-body">
+    <p class="card-title">Your appeal</p>
+    <p class="card-text">{{ appeal_reason }}</p>
+  </div>
+</div>
+{% endblock %}
+
+{% block actions %}
+<div class="actions">
+  <a class="btn-primary" href="{{ account_url }}">Open dealer workspace</a>
+</div>
+{% endblock %}

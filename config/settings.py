@@ -258,17 +258,36 @@ CELERY_BEAT_SCHEDULE = {
         "task": "apps.accounts.tasks.enforce_dealer_email_verification",
         "schedule": crontab(hour=0, minute=15),
     },
+    "send-dealer-email-verification-reminders": {
+        "task": "apps.accounts.tasks.send_dealer_email_verification_reminders",
+        "schedule": crontab(hour=9, minute=0),
+    },
 }
 
-EMAIL_BACKEND = os.getenv(
-    "DJANGO_EMAIL_BACKEND",
-    "django.core.mail.backends.console.EmailBackend",
-)
+EMAIL_BACKEND = os.getenv("DJANGO_EMAIL_BACKEND", "")
+EMAIL_HOST = os.getenv("EMAIL_HOST", "")
+EMAIL_PORT = int(os.getenv("EMAIL_PORT", "587"))
+EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "")
+EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
+EMAIL_USE_TLS = os.getenv("EMAIL_USE_TLS", "true").lower() in {"1", "true", "yes", "on"}
+EMAIL_USE_SSL = os.getenv("EMAIL_USE_SSL", "false").lower() in {"1", "true", "yes", "on"}
+if not EMAIL_BACKEND:
+    if EMAIL_HOST_USER:
+        EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
+    else:
+        EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
+if not EMAIL_HOST and "@" in EMAIL_HOST_USER:
+    EMAIL_HOST = f"mail.{EMAIL_HOST_USER.split('@', 1)[1]}"
 DEFAULT_FROM_EMAIL = os.getenv(
     "DJANGO_DEFAULT_FROM_EMAIL",
-    "Autoshowroom <no-reply@autoshowroom.local>",
+    f"AutoShowroom <{EMAIL_HOST_USER}>" if EMAIL_HOST_USER else "Autoshowroom <no-reply@autoshowroom.local>",
 )
-DEALER_APP_URL = os.getenv("DEALER_APP_URL", "http://localhost:5173")
+DEALER_APP_URL = os.getenv("DEALER_APP_URL", "http://localhost:5174")
+PLATFORM_APP_URL = os.getenv("PLATFORM_APP_URL", "http://localhost:5173")
+BUYER_APP_URL = os.getenv("BUYER_APP_URL", "http://localhost:3000")
+EMAIL_LOGO_URL = os.getenv("EMAIL_LOGO_URL", "").strip()
+EMAIL_VERIFICATION_EXPIRY_HOURS = int(os.getenv("EMAIL_VERIFICATION_EXPIRY_HOURS", "24"))
+EMAIL_VERIFICATION_REMINDER_DAYS_BEFORE = int(os.getenv("EMAIL_VERIFICATION_REMINDER_DAYS_BEFORE", "1"))
 DEALER_EMAIL_VERIFICATION_GRACE_DAYS = int(
     os.getenv("DEALER_EMAIL_VERIFICATION_GRACE_DAYS", "7")
 )

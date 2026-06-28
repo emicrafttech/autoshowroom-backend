@@ -160,11 +160,14 @@ class BuyerOpenChatView(EnvelopeMixin, APIView):
         )
         message = serializer.validated_data.get("message", "").strip()
         if message:
-            BuyerMessage.objects.create(
+            chat_message = BuyerMessage.objects.create(
                 conversation=conversation,
                 sender_type=BuyerMessage.SenderType.BUYER,
                 body=message,
             )
             conversation.last_message_at = timezone.now()
             conversation.save(update_fields=["last_message_at", "updated_at"])
+            from apps.notifications.services import notify_buyer_chat_message
+
+            notify_buyer_chat_message(chat_message)
         return Response(BuyerConversationSerializer(conversation).data, status=status.HTTP_201_CREATED)

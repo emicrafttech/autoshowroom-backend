@@ -1,0 +1,55 @@
+{% extends "emails/base.html" %}
+
+{% block title %}New lead · {{ brand_name }}{% endblock %}
+
+{% block header_badge %}<span class="badge">New lead</span>{% endblock %}
+
+{% block hero %}
+<div class="hero hero-top">
+  <h1 class="title title-sm">{{ buyer_name }} is interested in your {{ vehicle_short_title }}</h1>
+  <p class="subtitle">
+    A buyer just messaged you. Dealers who reply within 10 minutes are 3× more
+    likely to close.
+  </p>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="card">
+  <table width="100%" cellpadding="0" cellspacing="0" role="presentation">
+    <tr>
+      {% if vehicle_image_url %}
+      <td width="96" valign="top" style="padding: 16px 0 16px 16px">
+        <img
+          src="{{ vehicle_image_url }}"
+          alt="{{ vehicle_title }}"
+          width="80"
+          height="60"
+          style="display: block; border-radius: 12px; object-fit: cover"
+        />
+      </td>
+      {% endif %}
+      <td valign="top" style="padding: 16px">
+        <p class="vehicle-title">{{ vehicle_title }}</p>
+        <p class="vehicle-specs">{{ vehicle_specs }}</p>
+        <p class="price">{{ vehicle_price }}</p>
+      </td>
+    </tr>
+  </table>
+</div>
+
+<div class="message-card">
+  <p class="message-meta">{{ buyer_name }}</p>
+  <p class="message-time">{{ lead_time }}</p>
+  <p class="message-bubble">{{ lead_message }}</p>
+</div>
+{% endblock %}
+
+{% block actions %}
+<div class="actions">
+  <a class="btn-primary" href="{{ reply_url }}">Reply in chat</a>
+  <a class="btn-secondary" href="{{ lead_details_url }}">View lead details</a>
+</div>
+{% endblock %}
+
+{% block footer_links %} · You're receiving lead alerts for {{ dealer_name }}{% endblock %}

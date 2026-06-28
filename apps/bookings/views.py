@@ -70,6 +70,9 @@ class AppointmentViewSet(EnvelopeMixin, viewsets.ModelViewSet):
         if appointment.booking_id:
             appointment.booking.status = Booking.Status.CANCELLED
             appointment.booking.save(update_fields=["status", "updated_at"])
+            from apps.notifications.services import notify_booking_cancelled
+
+            notify_booking_cancelled(appointment.booking)
         appointment.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
@@ -96,4 +99,7 @@ class AppointmentViewSet(EnvelopeMixin, viewsets.ModelViewSet):
             appointment.booking.scheduled_at = scheduled_at
             appointment.booking.status = Booking.Status.RESCHEDULED
             appointment.booking.save(update_fields=["scheduled_at", "status", "updated_at"])
+            from apps.notifications.services import notify_booking_rescheduled
+
+            notify_booking_rescheduled(appointment.booking)
         return Response(AppointmentSerializer(appointment, context={"request": request}).data)

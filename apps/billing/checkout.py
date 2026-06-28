@@ -156,6 +156,9 @@ def activate_subscription(
             "checkoutKind": init_payload.get("checkoutKind"),
         },
     )
+    from apps.notifications.services import notify_payment_received
+
+    notify_payment_received(invoice, reference)
     return subscription, invoice
 
 

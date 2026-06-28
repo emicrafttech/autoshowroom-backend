@@ -1,0 +1,31 @@
+{% extends "emails/base.html" %}
+
+{% block title %}Payment received · {{ brand_name }}{% endblock %}
+
+{% block hero %}
+<div class="hero">
+  <div class="icon-circle">✓</div>
+  <h1 class="title">Payment received</h1>
+  <p class="subtitle">
+    Your {{ plan_name }} subscription payment of {{ amount_display }} was
+    successful.
+  </p>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="card">
+  <div class="card-body">
+    <p class="card-row"><strong>Plan:</strong> {{ plan_name }}</p>
+    <p class="card-row"><strong>Amount:</strong> {{ amount_display }}</p>
+    <p class="card-row"><strong>Reference:</strong> {{ reference }}</p>
+  </div>
+</div>
+{% endblock %}
+
+{% block actions %}
+<div class="actions">
+  <a class="btn-primary" href="{{ billing_url }}">View billing</a>
+  {% if invoice_url %}<a class="btn-secondary" href="{{ invoice_url }}">Download invoice</a>{% endif %}
+</div>
+{% endblock %}

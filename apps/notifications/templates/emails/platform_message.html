@@ -1,0 +1,27 @@
+{% extends "emails/base.html" %}
+
+{% block title %}{{ subject_line }} · {{ brand_name }}{% endblock %}
+
+{% block hero %}
+<div class="hero">
+  <p class="eyebrow">Platform message</p>
+  <h1 class="title">{{ subject_line }}</h1>
+  <p class="subtitle">
+    AutoShowroom platform staff sent a message to {{ dealer_name }}.
+  </p>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="card">
+  <div class="card-body">
+    <p class="card-text pre-wrap">{{ message_body }}</p>
+  </div>
+</div>
+{% endblock %}
+
+{% block actions %}
+<div class="actions">
+  <a class="btn-primary" href="{{ account_url }}">Open dealer workspace</a>
+</div>
+{% endblock %}

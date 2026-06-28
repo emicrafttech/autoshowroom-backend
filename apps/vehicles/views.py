@@ -262,6 +262,9 @@ class VehicleViewSet(EnvelopeMixin, viewsets.ModelViewSet):
             vehicle,
             {"feedReady": vehicle.feed_ready},
         )
+        from apps.notifications.services import notify_listing_approved
+
+        notify_listing_approved(vehicle)
         return Response(VehicleSerializer(vehicle, context={"request": request}).data)
 
     @action(detail=True, methods=["patch"], url_path="review/reject")

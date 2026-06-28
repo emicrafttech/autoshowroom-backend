@@ -1,5 +1,4 @@
 from django.conf import settings
-from django.core.mail import send_mail
 from django.contrib.auth import update_session_auth_hash
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -31,7 +30,7 @@ from .serializers import (
     SessionLocationSerializer,
     StaffInvitationPreviewSerializer,
 )
-from .tokens import generate_invite_token, hash_invite_token
+from apps.notifications.email_verification import issue_dealer_email_verification
 
 
 def resolve_active_location(user: StaffUser):
@@ -121,17 +120,21 @@ class DealerSignupSetupView(EnvelopeMixin, APIView):
         )
         serializer.is_valid(raise_exception=True)
         user = serializer.save()
+        dev_token = None
+        if not user.email_verified_at:
+            dev_token = issue_dealer_email_verification(user)
         active_location = resolve_active_location(user)
         tokens = issue_token_pair(user, active_location)
-        return Response(
-            {
-                **tokens,
-                "user": AuthUserSerializer(
-                    user,
-                    context={"active_location": active_location},
-                ).data,
-            }
-        )
+        response = {
+            **tokens,
+            "user": AuthUserSerializer(
+                user,
+                context={"active_location": active_location},
+            ).data,
+        }
+        if settings.DEBUG and dev_token:
+            response["devToken"] = dev_token
+        return Response(response)
 
 
 class DealerSignupPasswordView(EnvelopeMixin, APIView):
@@ -193,31 +196,7 @@ class EmailVerificationSendView(EnvelopeMixin, APIView):
                     "sent": False,
                 }
             )
-        token = generate_invite_token()
-        user.email_verification_token_hash = hash_invite_token(token)
-        user.email_verification_sent_at = timezone.now()
-        update_fields = [
-            "email_verification_token_hash",
-            "email_verification_sent_at",
-            "updated_at",
-        ]
-        if user.email_verification_required_at is None:
-            user.email_verification_required_at = timezone.now()
-            update_fields.append("email_verification_required_at")
-        user.save(
-            update_fields=update_fields
-        )
-        verify_url = f"{getattr(settings, 'DEALER_APP_URL', 'http://localhost:5173')}/verify-email?token={token}"
-        send_mail(
-            "Verify your AutoShowroom dealer email",
-            (
-                "Verify this email so you do not miss important dealer account notifications.\n\n"
-                f"Verification link: {verify_url}"
-            ),
-            getattr(settings, "DEFAULT_FROM_EMAIL", "Autoshowroom <no-reply@autoshowroom.local>"),
-            [user.email],
-            fail_silently=False,
-        )
+        token = issue_dealer_email_verification(user)
         response = {
             "user": AuthUserSerializer(
                 user,

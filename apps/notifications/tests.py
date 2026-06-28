@@ -1,11 +1,24 @@
+from datetime import timedelta
 from unittest.mock import patch
 
 from django.test import TestCase
+from django.utils import timezone
 from rest_framework.test import APIClient
 
 from apps.accounts.models import StaffUser
+from apps.bookings.models import Booking
 from apps.dealers.models import Dealer, DealerLocation
+from apps.leads.models import Lead
 from apps.notifications.models import DealerNotification
+from apps.notifications.tasks import (
+    send_booking_confirmation_email,
+    send_dealer_email_verification_email,
+    send_dealer_verification_success_email,
+    send_listing_review_issue_email,
+    send_new_lead_alert_email,
+    send_platform_message_emails,
+    send_staff_invite_email,
+)
 from apps.platform.models import PlatformRole
 from apps.vehicles.models import Vehicle, VehicleReviewIssue
 
@@ -60,7 +73,7 @@ class DealerNotificationFlowTests(TestCase):
 
     def test_platform_message_creates_dealer_notification(self):
         self.client.force_authenticate(self.platform_user)
-        with patch("apps.platform.views.send_mail"):
+        with patch("apps.notifications.services.send_platform_message_emails.delay"):
             response = self.client.post(
                 f"/v1/platform/dealers/{self.dealer.id}/message",
                 {"subject": "Action needed", "message": "Please update your documents."},
@@ -117,7 +130,7 @@ class DealerNotificationFlowTests(TestCase):
             platform_role=review_role,
         )
         self.client.force_authenticate(reviewer)
-        with patch("apps.notifications.services.send_vehicle_review_issue_email.delay"):
+        with patch("apps.notifications.services.send_listing_review_issue_email.delay"):
             response = self.client.patch(
                 f"/v1/vehicles/{self.vehicle.id}/review/reject",
                 {
@@ -238,3 +251,123 @@ class PlatformNotificationFlowTests(TestCase):
         read_all_response = self.client.post("/v1/platform/notifications/read-all")
         self.assertEqual(read_all_response.status_code, 200)
         self.assertEqual(read_all_response.json()["data"]["updated"], 1)
+
+
+class TransactionalEmailTests(TestCase):
+    def setUp(self):
+        self.dealer = Dealer.objects.create(
+            slug="email-dealer",
+            name="GrandView Motors",
+            legal_name="GrandView Motors Ltd",
+            area="Wuse",
+            phone="+2348033333333",
+            verification_status=Dealer.VerificationStatus.APPROVED,
+            verified_badge=True,
+            verified_at=timezone.now(),
+        )
+        self.location = DealerLocation.objects.create(
+            dealer=self.dealer,
+            name="Main Stand",
+            area="Wuse 2, Abuja",
+            address="12 Ahmadu Bello Way",
+            is_primary=True,
+        )
+        self.staff = StaffUser.objects.create_user(
+            email="owner@email-dealer.test",
+            password="strong-pass-123",
+            name="Dealer Owner",
+            dealer=self.dealer,
+            preferred_location=self.location,
+        )
+        self.vehicle = Vehicle.objects.create(
+            dealer=self.dealer,
+            location=self.location,
+            slug="lexus-rc-350",
+            make="Lexus",
+            model="RC 350",
+            trim="F Sport",
+            year=2020,
+            price_ngn=38500000,
+            mileage_km=48200,
+            transmission=Vehicle.Transmission.AUTOMATIC,
+            fuel=Vehicle.Fuel.PETROL,
+            body_type=Vehicle.BodyType.COUPE,
+            drivetrain=Vehicle.Drivetrain.RWD,
+            condition_grade=Vehicle.ConditionGrade.GOOD,
+            status=Vehicle.Status.AVAILABLE,
+            listing_verification_status=Vehicle.ListingVerificationStatus.APPROVED,
+            feed_ready=True,
+        )
+
+    @patch("apps.notifications.emails.EmailMultiAlternatives")
+    def test_dealer_email_verification_template(self, email_cls):
+        send_dealer_email_verification_email(str(self.staff.id), "verify-token-1234567890")
+        email_cls.assert_called_once()
+        self.assertEqual(email_cls.call_args.kwargs["subject"], "Confirm your email to start selling cars")
+        email_cls.return_value.send.assert_called_once()
+
+    @patch("apps.notifications.emails.EmailMultiAlternatives")
+    def test_new_lead_alert_template(self, email_cls):
+        lead = Lead.objects.create(
+            dealer=self.dealer,
+            location=self.location,
+            vehicle=self.vehicle,
+            name="Emeka",
+            phone="+2348044444444",
+            message="Is the price negotiable?",
+        )
+        send_new_lead_alert_email(str(lead.id))
+        email_cls.assert_called_once()
+        self.assertIn("Emeka is interested in your Lexus RC 350", email_cls.call_args.kwargs["subject"])
+        email_cls.return_value.send.assert_called_once()
+
+    @patch("apps.notifications.emails.EmailMultiAlternatives")
+    def test_booking_confirmation_template(self, email_cls):
+        booking = Booking.objects.create(
+            vehicle=self.vehicle,
+            dealer=self.dealer,
+            location=self.location,
+            buyer_name="Ada",
+            buyer_phone="+2348055555555",
+            buyer_email="ada@buyer.test",
+            scheduled_at=timezone.now() + timedelta(days=2),
+            status=Booking.Status.CONFIRMED,
+        )
+        send_booking_confirmation_email(str(booking.id))
+        email_cls.assert_called_once()
+        self.assertEqual(email_cls.call_args.kwargs["subject"], "Your inspection is confirmed")
+        email_cls.return_value.send.assert_called_once()
+
+    @patch("apps.notifications.emails.EmailMultiAlternatives")
+    def test_dealer_verification_success_template(self, email_cls):
+        send_dealer_verification_success_email(str(self.dealer.id))
+        email_cls.assert_called_once()
+        self.assertIn("GrandView Motors is now verified", email_cls.call_args.kwargs["subject"])
+        email_cls.return_value.send.assert_called_once()
+
+    @patch("apps.notifications.emails.EmailMultiAlternatives")
+    def test_listing_review_issue_template(self, email_cls):
+        issue = VehicleReviewIssue.objects.create(
+            vehicle=self.vehicle,
+            reviewer=self.staff,
+            category=VehicleReviewIssue.Category.DETAILS,
+            message="Fix the mileage.",
+        )
+        send_listing_review_issue_email(str(self.vehicle.id), str(issue.id))
+        email_cls.assert_called_once()
+        self.assertIn("Action needed", email_cls.call_args.kwargs["subject"])
+        email_cls.return_value.send.assert_called_once()
+
+    @patch("apps.notifications.emails.EmailMultiAlternatives")
+    def test_platform_message_template(self, email_cls):
+        send_platform_message_emails(str(self.dealer.id), "Action needed", "Please update your documents.")
+        email_cls.assert_called_once()
+        self.assertEqual(email_cls.call_args.kwargs["subject"], "Action needed")
+        email_cls.return_value.send.assert_called_once()
+
+    @patch("apps.notifications.emails.EmailMultiAlternatives")
+    def test_staff_invite_template(self, email_cls):
+        send_staff_invite_email(str(self.staff.id), "invite-token-1234567890", "dealer")
+        email_cls.assert_called_once()
+        self.assertIn("invited", email_cls.call_args.kwargs["subject"].lower())
+        email_cls.return_value.send.assert_called_once()

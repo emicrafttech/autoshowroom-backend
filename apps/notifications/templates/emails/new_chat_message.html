@@ -1,0 +1,15 @@
+{% extends "emails/new_lead_alert.html" %}
+
+{% block title %}New chat message · {{ brand_name }}{% endblock %}
+
+{% block header_badge %}<span class="badge">New message</span>{% endblock %}
+
+{% block hero %}
+<div class="hero hero-top">
+  <h1 class="title title-sm">{{ buyer_name }} sent you a message</h1>
+  <p class="subtitle">
+    Reply quickly — dealers who respond within 10 minutes are 3× more likely
+    to close.
+  </p>
+</div>
+{% endblock %}

@@ -300,7 +300,7 @@ class UnifiedVehicleCatalogTests(TestCase):
         self.assertEqual(approve_audit.actor, self.reviewer)
         self.assertEqual(approve_audit.metadata["feedReady"], True)
 
-        with patch("apps.notifications.services.send_vehicle_review_issue_email.delay"):
+        with patch("apps.notifications.services.send_listing_review_issue_email.delay"):
             reject_response = self.client.patch(
                 f"/v1/vehicles/{other_vehicle.id}/review/reject",
                 {"reason": "Incomplete documents"},
@@ -321,7 +321,7 @@ class UnifiedVehicleCatalogTests(TestCase):
         self.assertEqual(reject_audit.metadata["reason"], "Incomplete documents")
         self.assertEqual(reject_audit.metadata["issueCount"], 1)
 
-        with patch("apps.notifications.services.send_vehicle_review_issue_email.delay") as remove_email_task:
+        with patch("apps.notifications.services.send_listing_review_issue_email.delay") as remove_email_task:
             remove_response = self.client.patch(
                 f"/v1/vehicles/{own_vehicle.id}/review/remove-from-feed",
                 {"reason": "Needs updated pricing"},
@@ -382,7 +382,7 @@ class UnifiedVehicleCatalogTests(TestCase):
         )
         self.authenticate(self.reviewer)
 
-        with patch("apps.notifications.services.send_vehicle_review_issue_email.delay") as email_task:
+        with patch("apps.notifications.services.send_listing_review_issue_email.delay") as email_task:
             response = self.client.patch(
                 f"/v1/vehicles/{vehicle.id}/review/reject",
                 {
@@ -479,7 +479,7 @@ class UnifiedVehicleCatalogTests(TestCase):
             listing_verification_status=Vehicle.ListingVerificationStatus.PENDING_REVIEW,
         )
         self.authenticate(self.reviewer)
-        with patch("apps.notifications.services.send_vehicle_review_issue_email.delay"):
+        with patch("apps.notifications.services.send_listing_review_issue_email.delay"):
             reject_response = self.client.patch(
                 f"/v1/vehicles/{vehicle.id}/review/reject",
                 {

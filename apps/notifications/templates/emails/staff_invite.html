@@ -1,0 +1,31 @@
+{% extends "emails/base.html" %}
+
+{% block title %}You're invited · {{ brand_name }}{% endblock %}
+
+{% block hero %}
+<div class="hero">
+  <p class="eyebrow">Team invite</p>
+  <h1 class="title">Join {{ organization_name }} on {{ brand_name }}</h1>
+  <p class="subtitle">
+    Hi {{ recipient_name }}, you've been invited to join the {{ portal_label }}
+    as {{ role_label }}.
+  </p>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="content">
+  <p>Accept your invite to set your password and access your workspace.</p>
+  <p class="muted">
+    This invite expires on {{ expires_at }}. If you weren't expecting this, you
+    can ignore this email.
+  </p>
+  <p class="muted link-break">Or copy this link: {{ invite_url }}</p>
+</div>
+{% endblock %}
+
+{% block actions %}
+<div class="actions">
+  <a class="btn-primary" href="{{ invite_url }}">Accept invite</a>
+</div>
+{% endblock %}

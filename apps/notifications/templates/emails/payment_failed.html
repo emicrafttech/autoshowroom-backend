@@ -1,0 +1,32 @@
+{% extends "emails/base.html" %}
+
+{% block title %}Payment failed · {{ brand_name }}{% endblock %}
+
+{% block hero %}
+<div class="hero">
+  <p class="eyebrow">Billing alert</p>
+  <h1 class="title">We couldn't process your payment</h1>
+  <p class="subtitle">
+    Your {{ plan_name }} payment did not go through. Update your billing details
+    to avoid service interruption.
+  </p>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="card">
+  <div class="card-body">
+    <p class="card-row"><strong>Amount:</strong> {{ amount_display }}</p>
+    <p class="card-row"><strong>Reason:</strong> {{ failure_reason }}</p>
+    {% if reference %}
+    <p class="card-row"><strong>Reference:</strong> {{ reference }}</p>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}
+
+{% block actions %}
+<div class="actions">
+  <a class="btn-primary" href="{{ billing_url }}">Update payment method</a>
+</div>
+{% endblock %}

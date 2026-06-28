@@ -1,0 +1,54 @@
+{% extends "emails/base.html" %}
+
+{% block title %}Inspection confirmed · {{ brand_name }}{% endblock %}
+
+{% block hero %}
+<div class="hero">
+  <div class="icon-circle">✓</div>
+  <h1 class="title">Your inspection is confirmed</h1>
+  <p class="subtitle">
+    Hi {{ buyer_name }}, your visit to see the {{ vehicle_short_title }} is
+    booked. Here are the details.
+  </p>
+</div>
+{% endblock %}
+
+{% block content %}
+{% if vehicle_image_url %}
+<div class="hero-media">
+  <img src="{{ vehicle_image_url }}" alt="{{ vehicle_title }}" width="536" />
+  <div class="hero-media-caption">
+    <span class="hero-media-title">{{ vehicle_title }}</span>
+    <span class="hero-media-price">{{ vehicle_price }}</span>
+  </div>
+</div>
+{% endif %}
+
+<div class="section">
+  <p class="detail-row">
+    <span class="detail-icon">📅</span>
+    <strong>When:</strong> {{ scheduled_at_display }}
+  </p>
+  <p class="detail-row">
+    <span class="detail-icon">📍</span>
+    <strong>Where:</strong> {{ location_label }}
+  </p>
+  <p class="detail-row">
+    <span class="detail-icon">👤</span>
+    <strong>Your agent:</strong> {{ agent_name }}{% if agent_phone %} · {{ agent_phone }}{% endif %}
+  </p>
+</div>
+
+<p class="note">
+  Need to change your visit? Contact the dealer before your appointment.
+</p>
+{% endblock %}
+
+{% block actions %}
+<div class="actions">
+  <a class="btn-primary" href="{{ calendar_url }}">Add to calendar</a>
+  <a class="btn-secondary" href="{{ directions_url }}">Get directions</a>
+</div>
+{% endblock %}
+
+{% block footer_links %} · Booking reference {{ booking_id }}{% endblock %}

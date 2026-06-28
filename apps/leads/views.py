@@ -43,6 +43,12 @@ class LeadViewSet(EnvelopeMixin, viewsets.ModelViewSet):
             "vehicle",
         )
 
+    def perform_create(self, serializer):
+        lead = serializer.save()
+        from apps.notifications.services import notify_new_lead
+
+        notify_new_lead(lead)
+
 
 class NotifyMeCreateView(EnvelopeMixin, generics.CreateAPIView):
     permission_classes = [AllowAny]

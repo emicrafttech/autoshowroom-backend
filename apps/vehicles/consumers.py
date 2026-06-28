@@ -109,4 +109,8 @@ class VehicleChatConsumer(AsyncJsonWebsocketConsumer):
         conversation = message.conversation
         conversation.last_message_at = message.created_at
         conversation.save(update_fields=["last_message_at", "updated_at"])
+        if sender_type == BuyerMessage.SenderType.BUYER:
+            from apps.notifications.services import notify_buyer_chat_message
+
+            notify_buyer_chat_message(message)
         return serialize_chat_message(message)

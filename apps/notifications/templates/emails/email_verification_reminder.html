@@ -1,0 +1,28 @@
+{% extends "emails/dealer_email_verification.html" %}
+
+{% block title %}Verify your email · {{ brand_name }}{% endblock %}
+
+{% block hero %}
+<div class="hero">
+  <p class="eyebrow">Action required</p>
+  <h1 class="title">Verify your email to keep selling</h1>
+  <p class="subtitle">
+    Hi {{ recipient_name }}, your dealer account will be restricted in
+    {{ days_remaining }} day{{ days_remaining|pluralize }} if your email is not
+    verified.
+  </p>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="content">
+  <p>
+    Verify <strong>{{ dealer_name }}</strong> now so you don't miss buyer leads,
+    booking alerts, or platform updates.
+  </p>
+  <p class="muted">This link expires in {{ expiry_hours }} hours.</p>
+  <p class="muted link-break">Or copy this link: {{ verify_url }}</p>
+</div>
+{% endblock %}
+
+{% block extra %}{% endblock %}
