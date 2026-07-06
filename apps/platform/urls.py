@@ -37,6 +37,7 @@ from .views import (
 )
 from apps.accounts.models import StaffUser
 from apps.dealers.models import Dealer, DealerLocation
+from apps.vehicles.models import Vehicle
 
 from .models import (
     AuditLog,
@@ -69,6 +70,16 @@ urlpatterns = [
     path("platform/auth/mfa/enroll", PlatformMfaView.as_view(), name="platform-mfa-enroll"),
     path("platform/auth/mfa/verify", PlatformMfaView.as_view(), name="platform-mfa-verify"),
     path("platform/overview", PlatformOverviewView.as_view(), name="platform-overview"),
+    path(
+        "platform/listings/review-queue/stats",
+        StatsView.as_view(
+            model=Vehicle,
+            status_field="listing_verification_status",
+            filter_kwargs={"listing_verification_status": Vehicle.ListingVerificationStatus.PENDING_REVIEW},
+            required_capability="listing_review.read",
+        ),
+        name="platform-listing-review-stats",
+    ),
     path("platform/settings", PlatformSettingsView.as_view(), name="platform-settings"),
     path("platform/reports/stats", StatsView.as_view(model=ContentReport, required_capability="content_reports.read"), name="platform-report-stats"),
     path("platform/reports/stats/overdue", StatsView.as_view(model=ContentReport, required_capability="content_reports.read"), name="platform-report-overdue-stats"),

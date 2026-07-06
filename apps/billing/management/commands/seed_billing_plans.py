@@ -14,6 +14,7 @@ class Command(BaseCommand):
                 "price_ngn": 0,
                 "listing_limit": 5,
                 "stand_limit": 1,
+                "feed_priority": 0,
                 "features": [],
             },
             {
@@ -22,6 +23,7 @@ class Command(BaseCommand):
                 "price_ngn": 50000,
                 "listing_limit": 50,
                 "stand_limit": 3,
+                "feed_priority": 10,
                 "features": ["featured_slots", "performance_analytics", "multiple_stands", "priority_support"],
             },
             {
@@ -30,6 +32,7 @@ class Command(BaseCommand):
                 "price_ngn": 150000,
                 "listing_limit": 500,
                 "stand_limit": 20,
+                "feed_priority": 20,
                 "features": [
                     "featured_slots",
                     "video_walkarounds",

@@ -5,6 +5,7 @@ from django.db import models
 
 class Booking(models.Model):
     class Status(models.TextChoices):
+        PENDING = "pending", "Pending"
         CONFIRMED = "confirmed", "Confirmed"
         RESCHEDULED = "rescheduled", "Rescheduled"
         CANCELLED = "cancelled", "Cancelled"
@@ -18,7 +19,7 @@ class Booking(models.Model):
     buyer_phone = models.CharField(max_length=32)
     buyer_email = models.EmailField(null=True, blank=True)
     scheduled_at = models.DateTimeField()
-    status = models.CharField(max_length=20, choices=Status.choices, default=Status.CONFIRMED)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
     notes = models.TextField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

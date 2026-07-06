@@ -7,11 +7,17 @@ from apps.buyers.auth import get_buyer_from_request
 from apps.dealers.models import DealerLocation
 from apps.marketplace.views import public_vehicle_queryset
 
+from .availability import (
+    build_vehicle_booking_availability,
+    get_dealer_booking_availability,
+    is_booking_slot_available,
+    normalize_booking_availability,
+)
 from .models import Appointment, Booking
 
 
 class BookingSerializer(serializers.ModelSerializer):
-    vehicleId = serializers.UUIDField(source="vehicle_id", write_only=True)
+    vehicleId = serializers.UUIDField(source="vehicle_id")
     buyerName = serializers.CharField(source="buyer_name", required=False, allow_blank=True)
     buyerPhone = serializers.CharField(source="buyer_phone", required=False, allow_blank=True)
     buyerEmail = serializers.EmailField(source="buyer_email", required=False, allow_null=True, allow_blank=True)
@@ -39,6 +45,34 @@ class BookingSerializer(serializers.ModelSerializer):
         vehicle = public_vehicle_queryset().filter(id=attrs["vehicle_id"]).first()
         if not vehicle:
             raise serializers.ValidationError({"vehicleId": "Public vehicle not found."})
+
+        request = self.context.get("request")
+        buyer = get_buyer_from_request(request)
+        now = timezone.now()
+        already_booked = Booking.objects.filter(
+            buyer=buyer,
+            vehicle=vehicle,
+            status__in=[
+                Booking.Status.PENDING,
+                Booking.Status.CONFIRMED,
+                Booking.Status.RESCHEDULED,
+            ],
+            scheduled_at__gte=now,
+        ).exists()
+        if already_booked:
+            raise serializers.ValidationError(
+                {
+                    "vehicleId": (
+                        "You already have an active booking for this car. "
+                        "Reschedule or cancel it from My Bookings to pick a new time."
+                    )
+                }
+            )
+        scheduled_at = attrs.get("scheduled_at")
+        if scheduled_at and not is_booking_slot_available(vehicle.dealer, scheduled_at):
+            raise serializers.ValidationError(
+                {"scheduledAt": "That time is no longer available. Pick another slot."}
+            )
         return attrs
 
     def create(self, validated_data):
@@ -57,7 +91,7 @@ class BookingSerializer(serializers.ModelSerializer):
             buyer_name=buyer_name,
             buyer_phone=buyer_phone,
             buyer_email=buyer_email,
-            status=Booking.Status.CONFIRMED,
+            status=Booking.Status.PENDING,
         )
         Appointment.objects.get_or_create(
             booking=booking,
@@ -70,15 +104,66 @@ class BookingSerializer(serializers.ModelSerializer):
                 "notes": booking.notes,
             },
         )
-        from apps.notifications.services import notify_booking_confirmed
+        from apps.notifications.services import notify_booking_requested
 
-        notify_booking_confirmed(booking)
+        notify_booking_requested(booking)
+        if buyer:
+            from apps.leads.services import sync_lead_from_booking
+
+            sync_lead_from_booking(
+                buyer=buyer,
+                vehicle=vehicle,
+                message=(validated_data.get("notes") or "").strip(),
+            )
         return booking
 
 
 class BookingSummarySerializer(serializers.Serializer):
     vehicleId = serializers.UUIDField()
     requestedAt = serializers.DateTimeField(required=False)
+
+
+class BookingAvailabilityRequestSerializer(serializers.Serializer):
+    vehicleId = serializers.UUIDField()
+    fromDate = serializers.DateField(required=False)
+    toDate = serializers.DateField(required=False)
+
+
+class DealerBookingAvailabilitySerializer(serializers.Serializer):
+    timezone = serializers.CharField(required=False)
+    slotLengthMinutes = serializers.IntegerField(required=False)
+    maxBookingsPerDay = serializers.IntegerField(required=False)
+    weeklyHours = serializers.DictField(required=False)
+    blockedDates = serializers.ListField(
+        child=serializers.CharField(),
+        required=False,
+    )
+
+    def validate(self, attrs):
+        return normalize_booking_availability(attrs)
+
+
+def booking_summary_for_vehicle(vehicle):
+    payload = build_vehicle_booking_availability(vehicle)
+    booked = Booking.objects.filter(
+        vehicle=vehicle,
+        scheduled_at__gte=timezone.now(),
+        status__in=[
+            Booking.Status.PENDING,
+            Booking.Status.CONFIRMED,
+        ],
+    ).count()
+    return {
+        "vehicleId": str(vehicle.id),
+        "dealerId": str(vehicle.dealer_id),
+        "locationId": str(vehicle.location_id),
+        "nextAvailableAt": payload.get("nextAvailableAt"),
+        "openBookingCount": booked,
+    }
+
+
+def dealer_booking_availability_payload(dealer):
+    return get_dealer_booking_availability(dealer)
 
 
 class AppointmentSerializer(serializers.ModelSerializer):
@@ -171,19 +256,3 @@ class AppointmentSerializer(serializers.ModelSerializer):
         if location_id and not DealerLocation.objects.filter(id=location_id, dealer_id=user.dealer_id).exists():
             raise serializers.ValidationError({"locationId": "Location not found for dealer."})
         return attrs
-
-
-def booking_summary_for_vehicle(vehicle):
-    now = timezone.now()
-    booked = Booking.objects.filter(
-        vehicle=vehicle,
-        scheduled_at__gte=now,
-        status=Booking.Status.CONFIRMED,
-    ).count()
-    return {
-        "vehicleId": str(vehicle.id),
-        "dealerId": str(vehicle.dealer_id),
-        "locationId": str(vehicle.location_id),
-        "nextAvailableAt": (now + timedelta(days=1)).isoformat(),
-        "openBookingCount": booked,
-    }

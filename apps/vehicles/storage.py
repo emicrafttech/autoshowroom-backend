@@ -6,6 +6,17 @@ import boto3
 from django.conf import settings
 
 
+def _s3_client():
+    client_kwargs = {
+        "region_name": settings.AWS_S3_REGION_NAME,
+        "aws_access_key_id": settings.AWS_ACCESS_KEY_ID,
+        "aws_secret_access_key": settings.AWS_SECRET_ACCESS_KEY,
+    }
+    if settings.AWS_S3_ENDPOINT_URL:
+        client_kwargs["endpoint_url"] = settings.AWS_S3_ENDPOINT_URL
+    return boto3.client("s3", **client_kwargs)
+
+
 @dataclass(frozen=True)
 class PresignedUpload:
     key: str
@@ -31,15 +42,7 @@ def build_public_url(key: str) -> str:
 
 
 def create_presigned_upload(key: str, content_type: str) -> PresignedUpload:
-    client_kwargs = {
-        "region_name": settings.AWS_S3_REGION_NAME,
-        "aws_access_key_id": settings.AWS_ACCESS_KEY_ID,
-        "aws_secret_access_key": settings.AWS_SECRET_ACCESS_KEY,
-    }
-    if settings.AWS_S3_ENDPOINT_URL:
-        client_kwargs["endpoint_url"] = settings.AWS_S3_ENDPOINT_URL
-
-    client = boto3.client("s3", **client_kwargs)
+    client = _s3_client()
     upload_url = client.generate_presigned_url(
         "put_object",
         Params={
@@ -60,15 +63,7 @@ def delete_media_objects(keys: list[str]) -> None:
     if not keys:
         return
 
-    client_kwargs = {
-        "region_name": settings.AWS_S3_REGION_NAME,
-        "aws_access_key_id": settings.AWS_ACCESS_KEY_ID,
-        "aws_secret_access_key": settings.AWS_SECRET_ACCESS_KEY,
-    }
-    if settings.AWS_S3_ENDPOINT_URL:
-        client_kwargs["endpoint_url"] = settings.AWS_S3_ENDPOINT_URL
-
-    client = boto3.client("s3", **client_kwargs)
+    client = _s3_client()
     for start in range(0, len(keys), 1000):
         chunk = keys[start:start + 1000]
         response = client.delete_objects(
@@ -78,3 +73,31 @@ def delete_media_objects(keys: list[str]) -> None:
         if response.get("Errors"):
             failed_keys = ", ".join(error.get("Key", "unknown") for error in response["Errors"])
             raise RuntimeError(f"Unable to delete media objects from storage: {failed_keys}")
+
+
+def download_media_object(key: str, destination: Path) -> Path:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    _s3_client().download_file(
+        settings.AWS_STORAGE_BUCKET_NAME,
+        key,
+        str(destination),
+    )
+    return destination
+
+
+def upload_media_object(key: str, source: Path, content_type: str) -> str:
+    extra_args = {"ContentType": content_type, "CacheControl": "public, max-age=31536000, immutable"}
+    if content_type.startswith("video/"):
+        extra_args["ContentDisposition"] = "inline"
+    _s3_client().upload_file(
+        str(source),
+        settings.AWS_STORAGE_BUCKET_NAME,
+        key,
+        ExtraArgs=extra_args,
+    )
+    return build_public_url(key)
+
+
+def build_processed_key(vehicle_id: str, suffix: str) -> str:
+    return f"{settings.MEDIA_UPLOAD_PREFIX}/{vehicle_id}/{uuid4().hex}{suffix}"
+

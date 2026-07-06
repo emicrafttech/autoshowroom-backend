@@ -308,12 +308,17 @@ class VehicleSerializer(serializers.ModelSerializer):
         return attrs
 
     def update(self, instance, validated_data):
+        previous_price = instance.price_ngn
         changed_fields = {
             field
             for field, value in validated_data.items()
             if field not in {"cover_media"} and getattr(instance, field, None) != value
         }
         instance = super().update(instance, validated_data)
+        if "price_ngn" in changed_fields or previous_price != instance.price_ngn:
+            from apps.vehicles.price_history import record_vehicle_price
+
+            record_vehicle_price(instance, instance.price_ngn)
         if (
             changed_fields
             and instance.listing_verification_status
@@ -328,6 +333,13 @@ class VehicleSerializer(serializers.ModelSerializer):
             from apps.notifications.platform_notifications import notify_listing_review_submitted
 
             notify_listing_review_submitted(instance)
+        return instance
+
+    def create(self, validated_data):
+        instance = super().create(validated_data)
+        from apps.vehicles.price_history import record_vehicle_price
+
+        record_vehicle_price(instance, instance.price_ngn)
         return instance
 
 

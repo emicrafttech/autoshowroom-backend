@@ -7,11 +7,14 @@ from django.utils.dateparse import parse_datetime
 
 from apps.common.permissions import IsActiveDealerStaff
 from apps.common.views import EnvelopeMixin
+from apps.buyers.auth import get_buyer_from_request
 from apps.marketplace.views import public_vehicle_queryset
 
+from .availability import build_vehicle_booking_availability
 from .models import Appointment, Booking
 from .serializers import (
     AppointmentSerializer,
+    BookingAvailabilityRequestSerializer,
     BookingSerializer,
     BookingSummarySerializer,
     booking_summary_for_vehicle,
@@ -21,6 +24,13 @@ from .serializers import (
 class BookingCreateView(EnvelopeMixin, APIView):
     permission_classes = [AllowAny]
     authentication_classes = []
+
+    def get(self, request):
+        buyer = get_buyer_from_request(request)
+        bookings = Booking.objects.filter(buyer=buyer).order_by(
+            "-scheduled_at", "-created_at"
+        )
+        return Response(BookingSerializer(bookings, many=True).data)
 
     def post(self, request):
         if not request.headers.get("Authorization", "").startswith("Bearer "):
@@ -45,6 +55,25 @@ class BookingSummaryView(EnvelopeMixin, APIView):
         if not vehicle:
             return Response({"detail": "Public vehicle not found."}, status=status.HTTP_404_NOT_FOUND)
         return Response(booking_summary_for_vehicle(vehicle))
+
+
+class BookingAvailabilityView(EnvelopeMixin, APIView):
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def post(self, request):
+        serializer = BookingAvailabilityRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        vehicle = public_vehicle_queryset().filter(id=serializer.validated_data["vehicleId"]).first()
+        if not vehicle:
+            return Response({"detail": "Public vehicle not found."}, status=status.HTTP_404_NOT_FOUND)
+        return Response(
+            build_vehicle_booking_availability(
+                vehicle,
+                from_date=serializer.validated_data.get("fromDate"),
+                to_date=serializer.validated_data.get("toDate"),
+            )
+        )
 
 
 class AppointmentViewSet(EnvelopeMixin, viewsets.ModelViewSet):
@@ -80,8 +109,13 @@ class AppointmentViewSet(EnvelopeMixin, viewsets.ModelViewSet):
     def confirm(self, request, pk=None):
         appointment = self.get_object()
         if appointment.booking_id:
+            was_confirmed = appointment.booking.status == Booking.Status.CONFIRMED
             appointment.booking.status = Booking.Status.CONFIRMED
             appointment.booking.save(update_fields=["status", "updated_at"])
+            if not was_confirmed:
+                from apps.notifications.services import notify_booking_confirmed
+
+                notify_booking_confirmed(appointment.booking)
         return Response(AppointmentSerializer(appointment, context={"request": request}).data)
 
     @action(detail=True, methods=["patch"], url_path="reschedule")

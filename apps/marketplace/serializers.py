@@ -50,7 +50,10 @@ class PublicVehicleSerializer(serializers.ModelSerializer):
     mileageKm = serializers.IntegerField(source="mileage_km", read_only=True)
     bodyType = serializers.CharField(source="body_type", read_only=True)
     conditionGrade = serializers.CharField(source="condition_grade", read_only=True)
+    importType = serializers.CharField(source="import_type", read_only=True)
     publishedAt = serializers.DateTimeField(source="published_at", read_only=True)
+    updatedAt = serializers.DateTimeField(source="updated_at", read_only=True)
+    feedReady = serializers.BooleanField(source="feed_ready", read_only=True)
 
     class Meta:
         model = Vehicle
@@ -72,9 +75,13 @@ class PublicVehicleSerializer(serializers.ModelSerializer):
             "colour",
             "bodyType",
             "conditionGrade",
+            "importType",
             "negotiable",
             "notes",
             "publishedAt",
+            "updatedAt",
+            "feedReady",
+            "status",
         ]
 
 

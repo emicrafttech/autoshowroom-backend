@@ -2,12 +2,14 @@ from django.urls import include, path
 from rest_framework.routers import SimpleRouter
 
 from .views import (
+    DealerBookingAvailabilityView,
     DealerContextView,
     DealerChatViewSet,
     DealerDeleteAccountView,
     DealerLocationViewSet,
     DealerProfileView,
     DealerPrivacyRequestView,
+    DealerPushTokenView,
     DealerSanctionAppealView,
     DealerSanctionStatusView,
     DealerSelfVerificationView,
@@ -28,6 +30,11 @@ router.register("", DealerVerificationViewSet, basename="dealer")
 
 urlpatterns = [
     path("me", DealerProfileView.as_view(), name="dealer-profile"),
+    path(
+        "me/booking-availability",
+        DealerBookingAvailabilityView.as_view(),
+        name="dealer-booking-availability",
+    ),
     path("me/context", DealerContextView.as_view(), name="dealer-context"),
     path("me/verification", DealerSelfVerificationView.as_view(), name="dealer-verification"),
     path("me/verification/submit", DealerSelfVerificationView.as_view(), name="dealer-verification-submit"),
@@ -41,5 +48,6 @@ urlpatterns = [
     path("me/sanction-appeal", DealerSanctionAppealView.as_view(), name="dealer-sanction-appeal"),
     path("me/privacy-request", DealerPrivacyRequestView.as_view(), name="dealer-privacy-request"),
     path("me/delete-account", DealerDeleteAccountView.as_view(), name="dealer-delete-account"),
+    path("me/push-token", DealerPushTokenView.as_view(), name="dealer-push-token"),
     path("", include(router.urls)),
 ]

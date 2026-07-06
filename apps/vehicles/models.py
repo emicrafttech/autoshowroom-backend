@@ -223,6 +223,23 @@ class Vehicle(models.Model):
         return f"{self.year} {self.make} {self.model}"
 
 
+class VehiclePriceHistory(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    vehicle = models.ForeignKey(
+        Vehicle,
+        on_delete=models.CASCADE,
+        related_name="price_history",
+    )
+    price_ngn = models.PositiveBigIntegerField()
+    recorded_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-recorded_at"]
+        indexes = [
+            models.Index(fields=["vehicle", "-recorded_at"]),
+        ]
+
+
 class VehicleMedia(models.Model):
     class Kind(models.TextChoices):
         PHOTO = "photo", "Photo"
@@ -248,6 +265,9 @@ class VehicleMedia(models.Model):
     file_name = models.CharField(max_length=255)
     file_size = models.PositiveBigIntegerField(null=True, blank=True)
     s3_key = models.CharField(max_length=500, unique=True)
+    original_s3_key = models.CharField(max_length=500, null=True, blank=True)
+    original_url = models.URLField(max_length=1000, null=True, blank=True)
+    processed_at = models.DateTimeField(null=True, blank=True)
     status = models.CharField(
         max_length=20,
         choices=Status.choices,

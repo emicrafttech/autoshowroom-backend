@@ -114,13 +114,27 @@ class VehicleViewSet(EnvelopeMixin, viewsets.ModelViewSet):
         now = timezone.now()
 
         vehicle.status = new_status
+        requires_platform_review = False
         if new_status == Vehicle.Status.AVAILABLE:
             if previous_status in [Vehicle.Status.HIDDEN, Vehicle.Status.SOLD] and not can_publish_listing(vehicle.dealer):
                 raise PermissionDenied("Your current plan listing limit has been reached.")
             vehicle.dealer_attestation_at = now
-            vehicle.listing_verification_status = (
-                Vehicle.ListingVerificationStatus.PENDING_REVIEW
+            relist_without_review = (
+                previous_status in [Vehicle.Status.SOLD, Vehicle.Status.RESERVED]
+                and vehicle.listing_verification_status
+                == Vehicle.ListingVerificationStatus.APPROVED
             )
+            if relist_without_review:
+                vehicle.feed_ready = True
+                if not vehicle.published_at:
+                    vehicle.published_at = now
+            else:
+                vehicle.listing_verification_status = (
+                    Vehicle.ListingVerificationStatus.PENDING_REVIEW
+                )
+                vehicle.feed_ready = False
+                requires_platform_review = True
+        elif new_status == Vehicle.Status.SOLD:
             vehicle.feed_ready = False
         elif new_status == Vehicle.Status.HIDDEN:
             vehicle.feed_ready = False
@@ -135,7 +149,7 @@ class VehicleViewSet(EnvelopeMixin, viewsets.ModelViewSet):
                 "updated_at",
             ]
         )
-        if vehicle.listing_verification_status == Vehicle.ListingVerificationStatus.PENDING_REVIEW:
+        if requires_platform_review:
             from apps.notifications.platform_notifications import notify_listing_review_submitted
 
             notify_listing_review_submitted(vehicle)
@@ -213,6 +227,11 @@ class VehicleViewSet(EnvelopeMixin, viewsets.ModelViewSet):
             media.thumbnail_url = serializer.validated_data["thumbnailUrl"]
         media.save(update_fields=["status", "thumbnail_url", "updated_at"])
 
+        if media.s3_key and not media.processed_at:
+            from .tasks import process_vehicle_media
+
+            process_vehicle_media.delay(str(media.id))
+
         if vehicle.cover_media_id is None and media.kind == VehicleMedia.Kind.PHOTO:
             vehicle.cover_media = media
             vehicle.save(update_fields=["cover_media", "updated_at"])
@@ -265,6 +284,13 @@ class VehicleViewSet(EnvelopeMixin, viewsets.ModelViewSet):
         from apps.notifications.services import notify_listing_approved
 
         notify_listing_approved(vehicle)
+        if vehicle.feed_ready:
+            from apps.notifications.tasks import dispatch_price_alert_pushes_for_vehicle
+
+            dispatch_price_alert_pushes_for_vehicle.delay(
+                str(vehicle.id),
+                match_kind="new_listing",
+            )
         return Response(VehicleSerializer(vehicle, context={"request": request}).data)
 
     @action(detail=True, methods=["patch"], url_path="review/reject")
@@ -387,6 +413,12 @@ class VehicleViewSet(EnvelopeMixin, viewsets.ModelViewSet):
             status=VehicleReviewIssue.Status.OPEN,
         ).update(status=VehicleReviewIssue.Status.APPROVED, reviewed_at=now)
         self.write_review_audit(request.user, "vehicle.feed.restored", vehicle)
+        from apps.notifications.tasks import dispatch_price_alert_pushes_for_vehicle
+
+        dispatch_price_alert_pushes_for_vehicle.delay(
+            str(vehicle.id),
+            match_kind="new_listing",
+        )
         return Response(VehicleSerializer(vehicle, context={"request": request}).data)
 
     def require_reviewer(self):

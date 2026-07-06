@@ -9,6 +9,7 @@ class BillingPlan(models.Model):
     price_ngn = models.PositiveBigIntegerField(default=0)
     listing_limit = models.PositiveIntegerField(default=10)
     stand_limit = models.PositiveIntegerField(default=1)
+    feed_priority = models.PositiveSmallIntegerField(default=0)
     is_active = models.BooleanField(default=True)
     features = models.JSONField(default=list, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)

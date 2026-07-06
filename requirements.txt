@@ -9,6 +9,7 @@ djangorestframework-simplejwt==5.5.1
 drf-spectacular
 psycopg==3.3.4
 psycopg-binary==3.3.4
+Pillow==11.3.0
 python-dotenv==1.2.2
 redis==7.4.0
 tzdata==2026.2
@@ -19,3 +20,4 @@ websockets==16.0
 channels
 channels-redis
 whitenoise
+firebase-admin>=6.6.0

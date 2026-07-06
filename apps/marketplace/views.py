@@ -1,4 +1,4 @@
-from django.db.models import Count, Q
+from django.db.models import Count
 from rest_framework.generics import ListAPIView, RetrieveAPIView
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
@@ -6,10 +6,17 @@ from rest_framework.views import APIView
 
 from apps.common.views import EnvelopeMixin
 from apps.buyers.auth import get_buyer_from_request
-from apps.buyers.models import VehicleVisit
+from apps.buyers.models import BuyerConversation, BuyerMessage
+from apps.buyers.visit_tracking import record_vehicle_visit
 from apps.dealers.models import Dealer, DealerLocation
-from apps.vehicles.models import Vehicle
+from apps.vehicles.models import Vehicle, VehicleMedia
 
+from .feed import (
+    annotate_feed_priority,
+    apply_feed_filters,
+    rank_feed_page,
+    with_feed_publish_order,
+)
 from .serializers import (
     PublicDealerDetailSerializer,
     PublicLocationSerializer,
@@ -40,41 +47,25 @@ class FeedView(EnvelopeMixin, ListAPIView):
 
     def get_queryset(self):
         queryset = public_vehicle_queryset()
-        params = self.request.query_params
-        filters = {
-            "make": "make__iexact",
-            "model": "model__iexact",
-            "bodyType": "body_type",
-            "dealerSlug": "dealer__slug",
-            "area": "location__area__iexact",
-        }
-        for param, lookup in filters.items():
-            value = params.get(param)
-            if value:
-                queryset = queryset.filter(**{lookup: value})
+        queryset = apply_feed_filters(queryset, self.request.query_params)
+        queryset = annotate_feed_priority(queryset)
+        return with_feed_publish_order(queryset)
 
-        min_price = params.get("minPriceNgn")
-        max_price = params.get("maxPriceNgn")
-        min_year = params.get("minYear")
-        max_year = params.get("maxYear")
-        if min_price:
-            queryset = queryset.filter(price_ngn__gte=min_price)
-        if max_price:
-            queryset = queryset.filter(price_ngn__lte=max_price)
-        if min_year:
-            queryset = queryset.filter(year__gte=min_year)
-        if max_year:
-            queryset = queryset.filter(year__lte=max_year)
-
-        search = params.get("q")
-        if search:
-            queryset = queryset.filter(
-                Q(make__icontains=search)
-                | Q(model__icontains=search)
-                | Q(trim__icontains=search)
-                | Q(dealer__name__icontains=search)
+    def list(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset())
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            page_number = self.paginator.page.number
+            ranked_page = rank_feed_page(
+                page,
+                params=request.query_params,
+                page_number=page_number,
             )
-        return queryset.order_by("-published_at", "-updated_at")
+            serializer = self.get_serializer(ranked_page, many=True)
+            return self.get_paginated_response(serializer.data)
+
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
 
 
 class FeedVehicleDetailView(EnvelopeMixin, RetrieveAPIView):
@@ -97,7 +88,11 @@ class FeedVehicleDetailView(EnvelopeMixin, RetrieveAPIView):
             except Exception:
                 buyer = None
             if buyer:
-                VehicleVisit.objects.create(buyer=buyer, vehicle=self.get_object())
+                vehicle = self.get_object()
+                record_vehicle_visit(buyer=buyer, vehicle=vehicle)
+                from apps.leads.services import sync_lead_from_vehicle_view
+
+                sync_lead_from_vehicle_view(buyer=buyer, vehicle=vehicle)
         return response
 
 
@@ -114,6 +109,87 @@ class FeedDealerDetailView(EnvelopeMixin, RetrieveAPIView):
         return Dealer.objects.filter(
             operational_status=Dealer.OperationalStatus.ACTIVE,
         ).prefetch_related("locations")
+
+    def retrieve(self, request, *args, **kwargs):
+        dealer = self.get_object()
+        data = self.get_serializer(dealer).data
+
+        vehicles_qs = (
+            Vehicle.objects.filter(dealer=dealer)
+            .select_related("dealer", "location", "cover_media")
+            .prefetch_related("media_items")
+        )
+        active_qs = vehicles_qs.filter(
+            status=Vehicle.Status.AVAILABLE,
+            listing_verification_status=Vehicle.ListingVerificationStatus.APPROVED,
+            feed_ready=True,
+        )
+        inventory_qs = (
+            vehicles_qs.filter(
+                status__in=[Vehicle.Status.AVAILABLE, Vehicle.Status.RESERVED],
+                listing_verification_status=Vehicle.ListingVerificationStatus.APPROVED,
+            )
+            .order_by("-published_at", "-updated_at")
+        )
+
+        data["activeListings"] = active_qs.count()
+        data["soldCount"] = vehicles_qs.filter(status=Vehicle.Status.SOLD).count()
+        data["responseTimeMins"] = self._response_time_mins(dealer)
+        data["coverImageUrl"] = self._cover_image_url(active_qs, inventory_qs)
+        data["vehicles"] = PublicVehicleSerializer(
+            inventory_qs,
+            many=True,
+            context={"request": request},
+        ).data
+        return Response(data)
+
+    def _cover_image_url(self, active_qs, inventory_qs):
+        cover_vehicle = (
+            active_qs.exclude(cover_media__isnull=True).order_by("-published_at").first()
+        )
+        if cover_vehicle and cover_vehicle.cover_media_id:
+            return cover_vehicle.cover_media.url or ""
+        showcase = inventory_qs.first()
+        if showcase is not None:
+            photo = (
+                showcase.media_items.filter(kind=VehicleMedia.Kind.PHOTO)
+                .order_by("sort_order")
+                .first()
+            )
+            if photo:
+                return photo.url or ""
+        return ""
+
+    def _response_time_mins(self, dealer):
+        conversations = (
+            BuyerConversation.objects.filter(dealer=dealer)
+            .order_by("-created_at")[:100]
+        )
+        deltas = []
+        for convo in conversations:
+            messages = list(convo.messages.order_by("created_at"))
+            first_buyer_at = None
+            first_dealer_after = None
+            for message in messages:
+                if (
+                    message.sender_type == BuyerMessage.SenderType.BUYER
+                    and first_buyer_at is None
+                ):
+                    first_buyer_at = message.created_at
+                elif (
+                    message.sender_type == BuyerMessage.SenderType.DEALER
+                    and first_buyer_at is not None
+                ):
+                    first_dealer_after = message.created_at
+                    break
+            if first_buyer_at and first_dealer_after:
+                delta = (first_dealer_after - first_buyer_at).total_seconds() / 60
+                if delta >= 0:
+                    deltas.append(delta)
+        if not deltas:
+            return None
+        deltas.sort()
+        return int(deltas[len(deltas) // 2])
 
 
 class FeedLocationsView(EnvelopeMixin, ListAPIView):

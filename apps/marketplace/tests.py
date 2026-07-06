@@ -118,6 +118,97 @@ class RemainingRoadmapTests(TestCase):
         self.assertEqual(notify_response.status_code, 201)
         self.assertEqual(NotifyMeRequest.objects.count(), 1)
 
+    def test_sold_vehicle_returns_to_feed_when_marked_available_again(self):
+        dealer_user = StaffUser.objects.create_user(
+            email="dealer-feed@example.com",
+            password="strong-pass-123",
+            name="Dealer Feed",
+            role=StaffUser.Role.OWNER,
+            dealer=self.dealer,
+            preferred_location=self.location,
+        )
+        dealer_client = APIClient()
+        dealer_client.force_authenticate(user=dealer_user)
+
+        sold_response = dealer_client.patch(
+            f"/v1/vehicles/{self.vehicle.id}/status",
+            {"status": "sold"},
+            format="json",
+        )
+        self.assertEqual(sold_response.status_code, 200)
+
+        feed_after_sold = self.client.get("/v1/feed")
+        self.assertEqual(feed_after_sold.json()["data"]["count"], 0)
+
+        available_response = dealer_client.patch(
+            f"/v1/vehicles/{self.vehicle.id}/status",
+            {"status": "available", "attestationAccepted": True},
+            format="json",
+        )
+        self.assertEqual(available_response.status_code, 200)
+
+        feed_after_available = self.client.get("/v1/feed")
+        self.assertEqual(feed_after_available.status_code, 200)
+        self.assertEqual(feed_after_available.json()["data"]["count"], 1)
+        self.assertEqual(
+            feed_after_available.json()["data"]["results"][0]["id"],
+            str(self.vehicle.id),
+        )
+
+    def test_dealer_profile_stats_and_inventory(self):
+        reserved = Vehicle.objects.create(
+            dealer=self.dealer,
+            location=self.location,
+            slug="honda-accord-2021",
+            make="Honda",
+            model="Accord",
+            year=2021,
+            price_ngn=17000000,
+            mileage_km=30000,
+            transmission=Vehicle.Transmission.AUTOMATIC,
+            fuel=Vehicle.Fuel.PETROL,
+            colour="Blue",
+            body_type=Vehicle.BodyType.SEDAN,
+            drivetrain=Vehicle.Drivetrain.FWD,
+            condition_grade=Vehicle.ConditionGrade.GOOD,
+            status=Vehicle.Status.RESERVED,
+            listing_verification_status=Vehicle.ListingVerificationStatus.APPROVED,
+            feed_ready=False,
+            published_at=timezone.now(),
+        )
+        Vehicle.objects.create(
+            dealer=self.dealer,
+            location=self.location,
+            slug="sold-camry-2019",
+            make="Toyota",
+            model="Camry",
+            year=2019,
+            price_ngn=12000000,
+            mileage_km=80000,
+            transmission=Vehicle.Transmission.AUTOMATIC,
+            fuel=Vehicle.Fuel.PETROL,
+            colour="Grey",
+            body_type=Vehicle.BodyType.SEDAN,
+            drivetrain=Vehicle.Drivetrain.FWD,
+            condition_grade=Vehicle.ConditionGrade.GOOD,
+            status=Vehicle.Status.SOLD,
+            listing_verification_status=Vehicle.ListingVerificationStatus.APPROVED,
+            feed_ready=False,
+            published_at=timezone.now() - timedelta(days=30),
+        )
+
+        response = self.client.get(f"/v1/feed/dealers/{self.dealer.slug}")
+        self.assertEqual(response.status_code, 200)
+        data = response.json()["data"]
+        self.assertEqual(data["activeListings"], 1)
+        self.assertEqual(data["soldCount"], 1)
+        self.assertIsNone(data["responseTimeMins"])
+        vehicle_ids = {item["id"] for item in data["vehicles"]}
+        self.assertIn(str(self.vehicle.id), vehicle_ids)
+        self.assertIn(str(reserved.id), vehicle_ids)
+        statuses = {item["id"]: item["status"] for item in data["vehicles"]}
+        self.assertEqual(statuses[str(reserved.id)], Vehicle.Status.RESERVED)
+
     def test_buyer_saved_vehicle_and_visit_tracking(self):
         token = self.buyer_token()
         self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
@@ -128,6 +219,10 @@ class RemainingRoadmapTests(TestCase):
 
         detail_response = self.client.get(f"/v1/feed/vehicles/{self.vehicle.id}")
         self.assertEqual(detail_response.status_code, 200)
+        self.assertEqual(VehicleVisit.objects.count(), 1)
+
+        repeat_response = self.client.get(f"/v1/feed/vehicles/{self.vehicle.id}")
+        self.assertEqual(repeat_response.status_code, 200)
         self.assertEqual(VehicleVisit.objects.count(), 1)
 
         saved_response = self.client.get("/v1/buyers/saved")
@@ -165,9 +260,33 @@ class RemainingRoadmapTests(TestCase):
         )
         self.assertEqual(booking_response.status_code, 201)
         booking = Booking.objects.get()
-        self.assertEqual(booking.status, Booking.Status.CONFIRMED)
+        self.assertEqual(booking.status, Booking.Status.PENDING)
         self.assertEqual(booking.buyer.phone, "+2348090000000")
         self.assertEqual(Appointment.objects.count(), 1)
+
+        list_response = self.client.get("/v1/bookings")
+        self.assertEqual(list_response.status_code, 200)
+        self.assertEqual(len(list_response.json()["data"]), 1)
+        self.assertEqual(
+            list_response.json()["data"][0]["vehicleId"],
+            str(self.vehicle.id),
+        )
+
+        duplicate_response = self.client.post(
+            "/v1/bookings",
+            {
+                "vehicleId": str(self.vehicle.id),
+                "scheduledAt": (timezone.now() + timedelta(days=4)).isoformat(),
+            },
+            format="json",
+        )
+        self.assertEqual(duplicate_response.status_code, 400)
+        self.assertEqual(Booking.objects.count(), 1)
+        self.assertEqual(Appointment.objects.count(), 1)
+        self.assertIn(
+            "already have an active booking",
+            str(duplicate_response.json()["error"]),
+        )
 
         self.client.credentials()
         self.client.force_authenticate(self.staff)
@@ -175,7 +294,7 @@ class RemainingRoadmapTests(TestCase):
         self.assertEqual(appointment_response.status_code, 200)
         self.assertEqual(appointment_response.json()["data"]["count"], 1)
         appointment_payload = appointment_response.json()["data"]["results"][0]
-        self.assertEqual(appointment_payload["status"], Booking.Status.CONFIRMED)
+        self.assertEqual(appointment_payload["status"], Booking.Status.PENDING)
         self.assertEqual(appointment_payload["locationName"], self.location.name)
         self.assertEqual(appointment_payload["locationArea"], self.location.area)
         self.assertEqual(appointment_payload["vehicleTitle"], "2020 Toyota Camry")

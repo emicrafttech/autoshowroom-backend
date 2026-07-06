@@ -27,3 +27,5 @@ media/
 tmp-*.json
 schema.json
 swagger-review-schema.json
+
+firebase.json

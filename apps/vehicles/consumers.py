@@ -55,6 +55,11 @@ class VehicleChatConsumer(AsyncJsonWebsocketConsumer):
         await self.send_json({"type": "message", "message": event["message"]})
 
     def get_token(self) -> str:
+        for header_name, header_value in self.scope.get("headers", []):
+            if header_name.lower() == b"authorization":
+                value = header_value.decode("latin1").strip()
+                if value.lower().startswith("bearer "):
+                    return value[7:].strip()
         query = parse_qs(self.scope.get("query_string", b"").decode())
         return (query.get("token") or [""])[0].strip()
 
@@ -113,4 +118,8 @@ class VehicleChatConsumer(AsyncJsonWebsocketConsumer):
             from apps.notifications.services import notify_buyer_chat_message
 
             notify_buyer_chat_message(message)
+        else:
+            from apps.notifications.services import notify_buyer_inbound_chat_message
+
+            notify_buyer_inbound_chat_message(message)
         return serialize_chat_message(message)

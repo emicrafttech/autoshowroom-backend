@@ -1,5 +1,4 @@
 from django.shortcuts import get_object_or_404
-from django.utils import timezone
 from rest_framework import status
 from rest_framework.exceptions import NotAuthenticated, PermissionDenied
 from rest_framework.permissions import AllowAny
@@ -8,6 +7,7 @@ from rest_framework.views import APIView
 from rest_framework_simplejwt.authentication import JWTAuthentication
 
 from apps.buyers.auth import get_buyer_from_request
+from apps.buyers.chat_service import create_conversation_message
 from apps.buyers.models import BuyerConversation, BuyerMessage
 from apps.buyers.serializers import (
     BuyerConversationSerializer,
@@ -17,7 +17,6 @@ from apps.buyers.serializers import (
 from apps.common.views import EnvelopeMixin
 
 from .models import Vehicle
-from .realtime import broadcast_chat_message
 
 
 def authenticate_vehicle_chat_actor(request):
@@ -91,18 +90,14 @@ class VehicleChatListCreateView(EnvelopeMixin, APIView):
             vehicle=vehicle,
         )
         message = serializer.validated_data.get("message", "").strip()
-        if message:
-            chat_message = BuyerMessage.objects.create(
-                conversation=conversation,
+        attachment_url = serializer.validated_data.get("attachmentUrl", "").strip()
+        if message or attachment_url:
+            create_conversation_message(
+                conversation,
                 sender_type=BuyerMessage.SenderType.BUYER,
                 body=message,
+                attachment_url=attachment_url,
             )
-            conversation.last_message_at = timezone.now()
-            conversation.save(update_fields=["last_message_at", "updated_at"])
-            broadcast_chat_message(chat_message)
-            from apps.notifications.services import notify_buyer_chat_message
-
-            notify_buyer_chat_message(chat_message)
         return Response(BuyerConversationSerializer(conversation).data, status=status.HTTP_201_CREATED)
 
 
@@ -126,19 +121,14 @@ class VehicleChatMessageCreateView(EnvelopeMixin, APIView):
         serializer = OpenConversationSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         message = serializer.validated_data.get("message", "").strip()
-        if message:
-            chat_message = BuyerMessage.objects.create(
-                conversation=conversation,
+        attachment_url = serializer.validated_data.get("attachmentUrl", "").strip()
+        if message or attachment_url:
+            create_conversation_message(
+                conversation,
                 sender_type=BuyerMessage.SenderType.DEALER
                 if actor_type == "dealer"
                 else BuyerMessage.SenderType.BUYER,
                 body=message,
+                attachment_url=attachment_url,
             )
-            conversation.last_message_at = timezone.now()
-            conversation.save(update_fields=["last_message_at", "updated_at"])
-            broadcast_chat_message(chat_message)
-            if chat_message.sender_type == BuyerMessage.SenderType.BUYER:
-                from apps.notifications.services import notify_buyer_chat_message
-
-                notify_buyer_chat_message(chat_message)
         return Response(BuyerConversationSerializer(conversation).data, status=status.HTTP_201_CREATED)

@@ -313,6 +313,67 @@ class AuthDealerFoundationTests(TestCase):
         self.user.refresh_from_db()
         self.assertFalse(self.user.is_active)
 
+    def test_staff_role_change_hierarchy(self):
+        manager = StaffUser.objects.create_user(
+            email="role-manager@example.com",
+            password="strong-pass-123",
+            name="Manager User",
+            role=StaffUser.Role.MANAGER,
+            dealer=self.dealer,
+        )
+        sales = StaffUser.objects.create_user(
+            email="role-sales@example.com",
+            password="strong-pass-123",
+            name="Sales User",
+            role=StaffUser.Role.SALES,
+            dealer=self.dealer,
+        )
+
+        # Owner cannot change own role.
+        self.authenticate(self.user)
+        self_role = self.client.patch(
+            f"/v1/dealers/me/staff/{self.user.id}", {"role": "manager"}, format="json"
+        )
+        self.assertEqual(self_role.status_code, 400)
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.role, StaffUser.Role.OWNER)
+
+        # Sales cannot change anyone's role.
+        self.authenticate(sales)
+        sales_change = self.client.patch(
+            f"/v1/dealers/me/staff/{manager.id}", {"role": "sales"}, format="json"
+        )
+        self.assertEqual(sales_change.status_code, 403)
+        manager.refresh_from_db()
+        self.assertEqual(manager.role, StaffUser.Role.MANAGER)
+
+        # Manager cannot promote sales to owner.
+        self.authenticate(manager)
+        manager_promote = self.client.patch(
+            f"/v1/dealers/me/staff/{sales.id}", {"role": "owner"}, format="json"
+        )
+        self.assertEqual(manager_promote.status_code, 403)
+        sales.refresh_from_db()
+        self.assertEqual(sales.role, StaffUser.Role.SALES)
+
+        # Manager can change a sales member to manager.
+        self.authenticate(manager)
+        manager_change = self.client.patch(
+            f"/v1/dealers/me/staff/{sales.id}", {"role": "manager"}, format="json"
+        )
+        self.assertEqual(manager_change.status_code, 200)
+        sales.refresh_from_db()
+        self.assertEqual(sales.role, StaffUser.Role.MANAGER)
+
+        # Owner can change a manager to sales.
+        self.authenticate(self.user)
+        owner_change = self.client.patch(
+            f"/v1/dealers/me/staff/{manager.id}", {"role": "sales"}, format="json"
+        )
+        self.assertEqual(owner_change.status_code, 200)
+        manager.refresh_from_db()
+        self.assertEqual(manager.role, StaffUser.Role.SALES)
+
     def test_change_password(self):
         self.authenticate()
         response = self.client.patch(

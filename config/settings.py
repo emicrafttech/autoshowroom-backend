@@ -17,7 +17,10 @@ def csv_env(name: str, default: str = "") -> list[str]:
 
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "unsafe-local-dev-secret-key")
 DEBUG = os.getenv("DJANGO_DEBUG", "false").lower() in {"1", "true", "yes", "on"}
-ALLOWED_HOSTS = csv_env("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1,0.0.0.0")
+ALLOWED_HOSTS = csv_env(
+    "DJANGO_ALLOWED_HOSTS",
+    "localhost,127.0.0.1,0.0.0.0,10.0.2.2",
+)
 CSRF_TRUSTED_ORIGINS = csv_env("DJANGO_CSRF_TRUSTED_ORIGINS")
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
@@ -299,6 +302,8 @@ PAYMENT_METHOD_VERIFICATION_NGN = int(os.getenv("PAYMENT_METHOD_VERIFICATION_NGN
 
 BUYER_TOKEN_TTL_SECONDS = int(os.getenv("BUYER_TOKEN_TTL_SECONDS", "604800"))
 OTP_CODE_TTL_MINUTES = int(os.getenv("OTP_CODE_TTL_MINUTES", "10"))
+FIREBASE_SERVICE_ACCOUNT_JSON = os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON", "")
+FIREBASE_SERVICE_ACCOUNT_PATH = os.getenv("FIREBASE_SERVICE_ACCOUNT_PATH", "")
 DEALER_SIGNUP_EXPOSE_OTP = os.getenv(
     "DEALER_SIGNUP_EXPOSE_OTP",
     "true" if DEBUG else "false",

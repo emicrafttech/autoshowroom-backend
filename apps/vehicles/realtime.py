@@ -11,6 +11,7 @@ def serialize_chat_message(message) -> dict:
         "id": str(message.id),
         "senderType": message.sender_type,
         "body": message.body,
+        "attachmentUrl": message.attachment_url,
         "createdAt": message.created_at.isoformat(),
     }
 

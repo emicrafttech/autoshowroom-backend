@@ -10,16 +10,20 @@ from rest_framework.views import APIView
 from apps.accounts.models import StaffUser
 from apps.accounts.tokens import generate_invite_token, hash_invite_token, invite_expiry
 from apps.billing.limits import get_stand_limit
+from apps.buyers.chat_service import create_chat_attachment_upload_session, create_conversation_message
 from apps.buyers.models import BuyerConversation, BuyerMessage
 from apps.buyers.serializers import (
     DealerConversationSerializer,
     OpenConversationSerializer,
 )
+from apps.bookings.serializers import (
+    DealerBookingAvailabilitySerializer,
+    dealer_booking_availability_payload,
+)
 from apps.common.permissions import IsActiveDealerStaff, IsDealerStaff
 from apps.common.views import EnvelopeMixin
 from apps.platform.models import DataSubjectRequest, DealerSanction, SanctionAppeal
 from apps.platform.views import IsPlatformStaff, write_audit
-from apps.vehicles.realtime import broadcast_chat_message
 
 from .models import Dealer, DealerLocation, DealerVerificationDocument
 from .serializers import (
@@ -56,6 +60,32 @@ class DealerProfileView(EnvelopeMixin, APIView):
         serializer.is_valid(raise_exception=True)
         serializer.save()
         return Response(serializer.data)
+
+
+class DealerBookingAvailabilityView(EnvelopeMixin, APIView):
+    permission_classes = [IsActiveDealerStaff]
+
+    def get_object(self):
+        return get_object_or_404(Dealer, id=self.request.user.dealer_id)
+
+    def get(self, request):
+        return Response(dealer_booking_availability_payload(self.get_object()))
+
+    def patch(self, request):
+        dealer = self.get_object()
+        current = dealer_booking_availability_payload(dealer)
+        incoming = request.data if isinstance(request.data, dict) else {}
+        merged = {**current, **incoming}
+        if isinstance(incoming.get("weeklyHours"), dict):
+            merged["weeklyHours"] = {
+                **current.get("weeklyHours", {}),
+                **incoming["weeklyHours"],
+            }
+        serializer = DealerBookingAvailabilitySerializer(data=merged)
+        serializer.is_valid(raise_exception=True)
+        dealer.booking_availability = serializer.validated_data
+        dealer.save(update_fields=["booking_availability", "updated_at"])
+        return Response(dealer_booking_availability_payload(dealer))
 
 
 class DealerContextView(EnvelopeMixin, APIView):
@@ -205,6 +235,20 @@ def _can_deactivate_staff(actor: StaffUser, target: StaffUser) -> bool:
     return False
 
 
+def _can_change_role(actor: StaffUser, target: StaffUser, new_role: str) -> bool:
+    """Role hierarchy for changing a member's role.
+
+    owner   -> can change any member's role to owner/manager/sales
+    manager -> can change sales members only, and cannot promote to owner
+    sales   -> cannot change roles
+    """
+    if actor.role == StaffUser.Role.OWNER:
+        return True
+    if actor.role == StaffUser.Role.MANAGER:
+        return target.role == StaffUser.Role.SALES and new_role != StaffUser.Role.OWNER
+    return False
+
+
 class DealerStaffViewSet(EnvelopeMixin, viewsets.ModelViewSet):
     serializer_class = DealerStaffSerializer
     permission_classes = [IsActiveDealerStaff]
@@ -233,12 +277,22 @@ class DealerStaffViewSet(EnvelopeMixin, viewsets.ModelViewSet):
         instance = serializer.instance
         actor = self.request.user
         new_is_active = serializer.validated_data.get("is_active", None)
+        new_role = serializer.validated_data.get("role", None)
+
         if new_is_active is not None and new_is_active != instance.is_active:
             if instance.id == actor.id:
                 raise ValidationError({"detail": "You cannot change your own active state."})
             if not _can_deactivate_staff(actor, instance):
                 raise PermissionDenied(
                     {"detail": "You do not have permission to change this team member's status."}
+                )
+
+        if new_role is not None and new_role != instance.role:
+            if instance.id == actor.id:
+                raise ValidationError({"detail": "You cannot change your own role."})
+            if not _can_change_role(actor, instance, new_role):
+                raise PermissionDenied(
+                    {"detail": "You do not have permission to change this team member's role."}
                 )
         serializer.save()
 
@@ -298,16 +352,34 @@ class DealerChatViewSet(EnvelopeMixin, viewsets.ReadOnlyModelViewSet):
         serializer = OpenConversationSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         body = serializer.validated_data.get("message", "").strip()
-        if body:
-            chat_message = BuyerMessage.objects.create(
-                conversation=conversation,
+        attachment_url = serializer.validated_data.get("attachmentUrl", "").strip()
+        if body or attachment_url:
+            create_conversation_message(
+                conversation,
                 sender_type=BuyerMessage.SenderType.DEALER,
                 body=body,
+                attachment_url=attachment_url,
             )
-            conversation.last_message_at = timezone.now()
-            conversation.save(update_fields=["last_message_at", "updated_at"])
-            broadcast_chat_message(chat_message)
         return Response(DealerConversationSerializer(conversation).data)
+
+    @action(detail=True, methods=["post"], url_path="read")
+    def mark_read(self, request, pk=None):
+        conversation = self.get_object()
+        conversation.dealer_last_read_at = timezone.now()
+        conversation.save(update_fields=["dealer_last_read_at", "updated_at"])
+        return Response(DealerConversationSerializer(conversation).data)
+
+    @action(detail=True, methods=["post"], url_path="attachments/upload-session")
+    def attachment_upload_session(self, request, pk=None):
+        conversation = self.get_object()
+        content_type = (request.data.get("contentType") or "").strip()
+        file_name = (request.data.get("fileName") or "").strip()
+        payload = create_chat_attachment_upload_session(
+            conversation_id=conversation.id,
+            content_type=content_type,
+            file_name=file_name,
+        )
+        return Response(payload, status=status.HTTP_201_CREATED)
 
 
 class DealerSelfVerificationView(EnvelopeMixin, APIView):
@@ -504,3 +576,37 @@ class DealerVerificationViewSet(EnvelopeMixin, viewsets.ReadOnlyModelViewSet):
 
         notify_dealer_verification_info_requested(dealer, reason)
         return Response(self.get_serializer(dealer).data)
+
+
+class DealerPushTokenView(EnvelopeMixin, APIView):
+    permission_classes = [IsDealerStaff]
+
+    def put(self, request):
+        from apps.accounts.push_devices import upsert_dealer_push_device
+
+        fcm_token = (request.data.get("token") or "").strip()
+        platform = (request.data.get("platform") or "android").strip().lower()
+        if not fcm_token:
+            raise ValidationError({"token": "FCM token is required."})
+
+        device = upsert_dealer_push_device(
+            staff_user=request.user,
+            fcm_token=fcm_token,
+            platform=platform,
+        )
+        return Response(
+            {
+                "id": str(device.id),
+                "platform": device.platform,
+                "lastSeenAt": device.last_seen_at,
+            }
+        )
+
+    def delete(self, request):
+        from apps.accounts.push_devices import delete_dealer_push_device
+
+        fcm_token = (request.data.get("token") or "").strip()
+        if not fcm_token:
+            raise ValidationError({"token": "FCM token is required."})
+        delete_dealer_push_device(staff_user=request.user, fcm_token=fcm_token)
+        return Response(status=status.HTTP_204_NO_CONTENT)

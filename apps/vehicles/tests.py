@@ -1,6 +1,7 @@
 from django.contrib.auth.models import Group
 from django.urls import resolve
 from django.urls.exceptions import Resolver404
+from django.utils import timezone
 from rest_framework.test import APIClient
 from django.test import TestCase
 from unittest.mock import patch
@@ -249,6 +250,63 @@ class UnifiedVehicleCatalogTests(TestCase):
             vehicle.listing_verification_status,
             Vehicle.ListingVerificationStatus.PENDING_REVIEW,
         )
+
+    def test_relist_after_sold_restores_feed_without_review(self):
+        vehicle = self.create_vehicle(
+            status=Vehicle.Status.AVAILABLE,
+            listing_verification_status=Vehicle.ListingVerificationStatus.APPROVED,
+            feed_ready=True,
+            published_at=timezone.now(),
+        )
+        self.authenticate()
+
+        sold_response = self.client.patch(
+            f"/v1/vehicles/{vehicle.id}/status",
+            {"status": "sold"},
+            format="json",
+        )
+        self.assertEqual(sold_response.status_code, 200)
+        vehicle.refresh_from_db()
+        self.assertEqual(vehicle.status, Vehicle.Status.SOLD)
+        self.assertFalse(vehicle.feed_ready)
+
+        available_response = self.client.patch(
+            f"/v1/vehicles/{vehicle.id}/status",
+            {"status": "available", "attestationAccepted": True},
+            format="json",
+        )
+        self.assertEqual(available_response.status_code, 200)
+        vehicle.refresh_from_db()
+        self.assertEqual(vehicle.status, Vehicle.Status.AVAILABLE)
+        self.assertEqual(
+            vehicle.listing_verification_status,
+            Vehicle.ListingVerificationStatus.APPROVED,
+        )
+        self.assertTrue(vehicle.feed_ready)
+        self.assertIsNotNone(vehicle.published_at)
+
+    def test_relist_after_reserved_restores_feed_without_review(self):
+        vehicle = self.create_vehicle(
+            status=Vehicle.Status.RESERVED,
+            listing_verification_status=Vehicle.ListingVerificationStatus.APPROVED,
+            feed_ready=False,
+            published_at=timezone.now(),
+        )
+        self.authenticate()
+
+        available_response = self.client.patch(
+            f"/v1/vehicles/{vehicle.id}/status",
+            {"status": "available", "attestationAccepted": True},
+            format="json",
+        )
+        self.assertEqual(available_response.status_code, 200)
+        vehicle.refresh_from_db()
+        self.assertEqual(vehicle.status, Vehicle.Status.AVAILABLE)
+        self.assertEqual(
+            vehicle.listing_verification_status,
+            Vehicle.ListingVerificationStatus.APPROVED,
+        )
+        self.assertTrue(vehicle.feed_ready)
 
     def test_refresh_updates_vehicle_refresh_timestamp(self):
         vehicle = self.create_vehicle()

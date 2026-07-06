@@ -443,3 +443,139 @@ def send_sanction_appeal_outcome_email(appeal_id: str) -> int:
         },
         recipient_list=dealer_staff_emails(appeal.dealer),
     )
+
+
+@shared_task
+def send_buyer_price_alert_push(
+    buyer_id: str,
+    *,
+    vehicle_id: str,
+    alert_id: str,
+    title: str,
+    body: str,
+    match_kind: str,
+) -> None:
+    from apps.notifications.buyer_push import send_buyer_push
+
+    send_buyer_push(
+        buyer_id=buyer_id,
+        title=title,
+        body=body,
+        data={
+            "kind": "price_alert",
+            "matchKind": match_kind,
+            "vehicleId": vehicle_id,
+            "alertId": alert_id,
+        },
+    )
+
+
+@shared_task
+def send_buyer_chat_message_push(message_id: str) -> None:
+    from apps.notifications.buyer_push import send_buyer_push
+
+    message = BuyerMessage.objects.select_related(
+        "conversation__buyer",
+        "conversation__dealer",
+        "conversation__vehicle",
+    ).get(id=message_id)
+    if message.sender_type != BuyerMessage.SenderType.DEALER:
+        return
+
+    conversation = message.conversation
+    preview = message.body.strip() or "Sent you a photo"
+    send_buyer_push(
+        buyer_id=conversation.buyer_id,
+        title=conversation.dealer.name,
+        body=preview[:140],
+        data={
+            "kind": "chat_message",
+            "conversationId": str(conversation.id),
+            "vehicleId": str(conversation.vehicle_id),
+        },
+    )
+
+
+@shared_task
+def send_buyer_booking_push(booking_id: str, *, headline: str, body: str) -> None:
+    from apps.notifications.buyer_push import send_buyer_push
+
+    booking = Booking.objects.select_related("buyer", "vehicle").get(id=booking_id)
+    if not booking.buyer_id:
+        return
+    send_buyer_push(
+        buyer_id=booking.buyer_id,
+        title=headline,
+        body=body,
+        data={
+            "kind": "booking_update",
+            "bookingId": str(booking.id),
+            "vehicleId": str(booking.vehicle_id),
+        },
+    )
+
+
+@shared_task
+def dispatch_price_alert_pushes_for_vehicle(
+    vehicle_id: str,
+    *,
+    previous_price_ngn: int | None = None,
+    match_kind: str = "price_drop",
+) -> int:
+    from apps.buyers.models import PriceAlert
+    from apps.buyers.price_alerts import build_alert_title, vehicle_matches_alert
+    from apps.notifications.emails import format_ngn
+
+    vehicle = Vehicle.objects.select_related("dealer", "location").get(id=vehicle_id)
+    sent = 0
+    alerts = PriceAlert.objects.filter(active=True, push_notify=True).select_related("buyer")
+    for alert in alerts:
+        if not vehicle_matches_alert(vehicle, alert):
+            continue
+
+        if match_kind == "new_listing":
+            published_at = vehicle.listing_approved_at or vehicle.published_at
+            if not published_at or published_at <= alert.created_at:
+                continue
+            title = "New listing matches your alert"
+            body = (
+                f"{vehicle.year} {vehicle.make} {vehicle.model} · "
+                f"{format_ngn(vehicle.price_ngn)} · {build_alert_title(alert)}"
+            )
+        else:
+            if previous_price_ngn is None or vehicle.price_ngn >= previous_price_ngn:
+                continue
+            title = "Price drop on a matching car"
+            body = (
+                f"{vehicle.year} {vehicle.make} {vehicle.model} dropped to "
+                f"{format_ngn(vehicle.price_ngn)} · {build_alert_title(alert)}"
+            )
+
+        send_buyer_price_alert_push.delay(
+            str(alert.buyer_id),
+            vehicle_id=str(vehicle.id),
+            alert_id=str(alert.id),
+            title=title,
+            body=body,
+            match_kind=match_kind,
+        )
+        sent += 1
+    return sent
+
+
+@shared_task
+def send_dealer_push_task(
+    dealer_id: str,
+    *,
+    title: str,
+    body: str,
+    data: dict[str, str] | None = None,
+) -> None:
+    from apps.notifications.dealer_push import send_dealer_push
+
+    send_dealer_push(
+        dealer_id=dealer_id,
+        title=title,
+        body=body,
+        data=data or {},
+    )

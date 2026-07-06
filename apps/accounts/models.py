@@ -115,3 +115,29 @@ class DealerSignupOtp(models.Model):
     @property
     def is_valid(self) -> bool:
         return self.consumed_at is None and self.expires_at > timezone.now()
+
+
+class DealerPushDevice(models.Model):
+    class Platform(models.TextChoices):
+        ANDROID = "android", "Android"
+        IOS = "ios", "iOS"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    staff_user = models.ForeignKey(
+        StaffUser,
+        on_delete=models.CASCADE,
+        related_name="push_devices",
+    )
+    fcm_token = models.CharField(max_length=512)
+    platform = models.CharField(max_length=20, choices=Platform.choices, default=Platform.ANDROID)
+    last_seen_at = models.DateTimeField(auto_now=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["staff_user", "fcm_token"],
+                name="unique_dealer_push_token",
+            )
+        ]
+        ordering = ["-last_seen_at"]
