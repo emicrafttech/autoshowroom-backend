@@ -80,6 +80,43 @@ class AuthDealerFoundationTests(TestCase):
         self.assertIn("accessToken", refresh_data)
         self.assertIn("refreshToken", refresh_data)
 
+    def test_mobile_login_issues_longer_refresh_token(self):
+        from django.conf import settings
+        from django.utils import timezone
+        from rest_framework_simplejwt.tokens import RefreshToken
+
+        desktop = self.client.post(
+            "/v1/auth/login",
+            {"email": "owner@example.com", "password": "strong-pass-123"},
+            format="json",
+        )
+        mobile = self.client.post(
+            "/v1/auth/login",
+            {"email": "owner@example.com", "password": "strong-pass-123"},
+            format="json",
+            HTTP_X_CLIENT_PLATFORM="mobile",
+        )
+        self.assertEqual(desktop.status_code, 200)
+        self.assertEqual(mobile.status_code, 200)
+
+        desktop_refresh = RefreshToken(desktop.json()["data"]["refreshToken"])
+        mobile_refresh = RefreshToken(mobile.json()["data"]["refreshToken"])
+        now_ts = int(timezone.now().timestamp())
+        desktop_ttl = desktop_refresh["exp"] - now_ts
+        mobile_ttl = mobile_refresh["exp"] - now_ts
+
+        self.assertAlmostEqual(
+            desktop_ttl,
+            settings.SIMPLE_JWT["REFRESH_TOKEN_LIFETIME"].total_seconds(),
+            delta=30,
+        )
+        self.assertAlmostEqual(
+            mobile_ttl,
+            settings.JWT_MOBILE_REFRESH_TOKEN_DAYS * 24 * 60 * 60,
+            delta=30,
+        )
+        self.assertGreater(mobile_ttl, desktop_ttl)
+
     def test_me_returns_current_user_with_verification_status(self):
         login_response = self.client.post(
             "/v1/auth/login",
@@ -121,6 +158,51 @@ class AuthDealerFoundationTests(TestCase):
 
         self.assertEqual(response.status_code, 400)
         self.assertIn("error", response.json())
+
+    def test_dealer_can_request_and_confirm_password_reset(self):
+        with patch("apps.notifications.services.notify_dealer_password_reset") as notify_reset:
+            request_response = self.client.post(
+                "/v1/auth/password-reset/request",
+                {"email": "owner@example.com"},
+                format="json",
+            )
+
+        self.assertEqual(request_response.status_code, 200)
+        self.assertTrue(request_response.json()["data"]["ok"])
+        token = notify_reset.call_args.args[1]
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.password_reset_token_hash, hash_invite_token(token))
+        self.assertIsNotNone(self.user.password_reset_expires_at)
+        notify_reset.assert_called_once()
+
+        confirm_response = self.client.post(
+            "/v1/auth/password-reset/confirm",
+            {
+                "token": token,
+                "password": "new-strong-pass-123",
+                "confirmPassword": "new-strong-pass-123",
+            },
+            format="json",
+        )
+
+        self.assertEqual(confirm_response.status_code, 200)
+        self.assertIn("accessToken", confirm_response.json()["data"])
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.check_password("new-strong-pass-123"))
+        self.assertIsNone(self.user.password_reset_token_hash)
+        self.assertIsNone(self.user.password_reset_expires_at)
+
+    def test_password_reset_request_does_not_reveal_unknown_email(self):
+        with patch("apps.notifications.services.notify_dealer_password_reset") as notify_reset:
+            response = self.client.post(
+                "/v1/auth/password-reset/request",
+                {"email": "missing@example.com"},
+                format="json",
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["data"], {"ok": True})
+        notify_reset.assert_not_called()
 
     def test_dealer_signup_start_and_verify_creates_owner_account(self):
         start_response = self.client.post(
@@ -453,7 +535,8 @@ class AuthDealerFoundationTests(TestCase):
             format="json",
         )
         self.assertEqual(patch_response.status_code, 200)
-        self.assertEqual(patch_response.json()["data"]["area"], "Maitama District")
+        self.assertEqual(patch_response.json()["data"]["area"], "maitama")
+        self.assertEqual(patch_response.json()["data"]["pendingChanges"]["area"], "Maitama District")
         self.assertEqual(patch_response.json()["data"]["premisesVerificationStatus"], "pending")
 
         set_primary_response = self.client.post(
@@ -640,7 +723,7 @@ class AuthDealerFoundationTests(TestCase):
 
         token = "email-token-with-enough-length"
         with patch("apps.notifications.email_verification.generate_invite_token", return_value=token), patch(
-            "apps.notifications.email_verification.send_dealer_email_verification_email.delay"
+            "apps.notifications.tasks.send_dealer_email_verification_email.delay"
         ):
             send_response = self.client.post("/v1/auth/email-verification/send", {}, format="json")
         verify_response = self.client.post(

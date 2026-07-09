@@ -198,6 +198,7 @@ class Vehicle(models.Model):
     dealer_attestation_at = models.DateTimeField(null=True, blank=True)
     listing_approved_at = models.DateTimeField(null=True, blank=True)
     listing_rejected_reason = models.TextField(null=True, blank=True)
+    listing_trust = models.TextField(null=True, blank=True)
     feed_ready = models.BooleanField(default=False)
     refreshed_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)

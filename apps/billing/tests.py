@@ -7,7 +7,7 @@ from django.utils import timezone
 from rest_framework.test import APIClient
 
 from apps.accounts.models import StaffUser
-from apps.billing.models import BillingPlan, Invoice, PaymentEvent, Subscription
+from apps.billing.models import BillingPlan, EarlyPlanTermination, Invoice, PaymentEvent, Subscription
 from apps.dealers.models import Dealer, DealerLocation
 
 
@@ -39,6 +39,13 @@ class PaystackCheckoutTests(TestCase):
             dealer=self.dealer,
             role=StaffUser.Role.OWNER,
         )
+        self.platform_user = StaffUser.objects.create_user(
+            email="platform-billing@test.local",
+            password="password123",
+            name="Platform Billing",
+            is_staff=True,
+            is_superuser=True,
+        )
         self.free_plan = BillingPlan.objects.create(
             id="free",
             name="Free",
@@ -61,7 +68,79 @@ class PaystackCheckoutTests(TestCase):
         )
         self.client.force_authenticate(self.staff)
 
+    def test_platform_plan_count_includes_dealer_plan_id_without_subscription(self):
+        self.client.force_authenticate(self.platform_user)
+
+        response = self.client.get("/v1/platform/billing/plans")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()["data"]
+        plans = payload["results"] if isinstance(payload, dict) else payload
+        free_plan = next(plan for plan in plans if plan["id"] == self.free_plan.id)
+        self.assertEqual(free_plan["activeDealerCount"], 1)
+
+    def test_platform_plan_creation_does_not_auto_enroll_dealer(self):
+        self.client.force_authenticate(self.platform_user)
+        original_plan_id = self.dealer.plan_id
+
+        response = self.client.post(
+            "/v1/platform/billing/plans",
+            {
+                "id": "launch",
+                "name": "Launch",
+                "priceNgn": 25000,
+                "listingLimit": 10,
+                "standLimit": 1,
+                "features": [],
+                "isActive": True,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 201)
+        self.dealer.refresh_from_db()
+        self.assertEqual(self.dealer.plan_id, original_plan_id)
+        self.assertFalse(Subscription.objects.filter(dealer=self.dealer, plan_id="launch").exists())
+
+    def test_invoice_pdf_endpoint_streams_downloadable_pdf(self):
+        subscription = Subscription.objects.create(
+            dealer=self.dealer,
+            plan=self.free_plan,
+            current_period_end=timezone.now() + timedelta(days=30),
+        )
+        invoice = Invoice.objects.create(
+            dealer=self.dealer,
+            subscription=subscription,
+            amount_ngn=15000,
+            status=Invoice.Status.PAID,
+        )
+
+        response = self.client.get(f"/v1/billing/invoices/{invoice.id}/pdf")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "application/pdf")
+        self.assertIn("attachment", response["Content-Disposition"])
+        self.assertTrue(b"".join(response.streaming_content).startswith(b"%PDF"))
+
+    def test_platform_can_list_early_plan_terminations(self):
+        self.client.force_authenticate(self.platform_user)
+        subscription = Subscription.objects.create(dealer=self.dealer, plan=self.free_plan)
+        EarlyPlanTermination.objects.create(
+            dealer=self.dealer,
+            subscription=subscription,
+            plan=self.free_plan,
+            reason="Dealer is closing a branch early.",
+        )
+
+        response = self.client.get("/v1/platform/billing/terminations")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["data"]["results"][0]["reason"], "Dealer is closing a branch early.")
+
     def test_free_plan_checkout_completes_without_paystack(self):
+        self.dealer.plan_id = "legacy"
+        self.dealer.save(update_fields=["plan_id"])
+
         start = self.client.post(
             "/v1/billing/checkout",
             {"planId": self.free_plan.id},

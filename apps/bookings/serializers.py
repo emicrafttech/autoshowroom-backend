@@ -69,7 +69,7 @@ class BookingSerializer(serializers.ModelSerializer):
                 }
             )
         scheduled_at = attrs.get("scheduled_at")
-        if scheduled_at and not is_booking_slot_available(vehicle.dealer, scheduled_at):
+        if scheduled_at and not is_booking_slot_available(vehicle.dealer, scheduled_at, vehicle.location):
             raise serializers.ValidationError(
                 {"scheduledAt": "That time is no longer available. Pick another slot."}
             )
@@ -162,8 +162,10 @@ def booking_summary_for_vehicle(vehicle):
     }
 
 
-def dealer_booking_availability_payload(dealer):
-    return get_dealer_booking_availability(dealer)
+def dealer_booking_availability_payload(dealer, location=None):
+    payload = get_dealer_booking_availability(dealer, location)
+    payload["locationId"] = str(location.id) if location else None
+    return payload
 
 
 class AppointmentSerializer(serializers.ModelSerializer):
@@ -178,6 +180,8 @@ class AppointmentSerializer(serializers.ModelSerializer):
     conversationId = serializers.SerializerMethodField()
     scheduledAt = serializers.DateTimeField(source="scheduled_at")
     status = serializers.SerializerMethodField()
+    attendanceStatus = serializers.SerializerMethodField()
+    attendedAt = serializers.SerializerMethodField()
     createdAt = serializers.DateTimeField(source="created_at", read_only=True)
     updatedAt = serializers.DateTimeField(source="updated_at", read_only=True)
 
@@ -197,6 +201,8 @@ class AppointmentSerializer(serializers.ModelSerializer):
             "title",
             "scheduledAt",
             "status",
+            "attendanceStatus",
+            "attendedAt",
             "notes",
             "createdAt",
             "updatedAt",
@@ -248,6 +254,16 @@ class AppointmentSerializer(serializers.ModelSerializer):
         if obj.booking_id:
             return obj.booking.status
         return "confirmed"
+
+    def get_attendanceStatus(self, obj):
+        if obj.booking_id:
+            return obj.booking.attendance_status
+        return "unknown"
+
+    def get_attendedAt(self, obj):
+        if obj.booking_id:
+            return obj.booking.attended_at
+        return None
 
     def validate(self, attrs):
         attrs = super().validate(attrs)

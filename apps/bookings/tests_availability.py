@@ -1,8 +1,11 @@
 from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from django.test import TestCase
 from django.utils import timezone
+from rest_framework.test import APIClient
 
+from apps.accounts.models import StaffUser
 from apps.bookings.availability import (
     build_vehicle_booking_availability,
     get_dealer_booking_availability,
@@ -15,6 +18,7 @@ from apps.vehicles.models import Vehicle
 
 class BookingAvailabilityTests(TestCase):
     def setUp(self):
+        self.client = APIClient()
         self.dealer = Dealer.objects.create(
             slug="prime-motors",
             name="Prime Motors",
@@ -42,6 +46,14 @@ class BookingAvailabilityTests(TestCase):
             area="Wuse",
             district_slug="wuse",
             is_primary=True,
+        )
+        self.staff = StaffUser.objects.create_user(
+            email="bookings@example.com",
+            password="strong-pass-123",
+            name="Booking Manager",
+            role=StaffUser.Role.OWNER,
+            dealer=self.dealer,
+            preferred_location=self.location,
         )
         self.vehicle = Vehicle.objects.create(
             dealer=self.dealer,
@@ -88,10 +100,34 @@ class BookingAvailabilityTests(TestCase):
         self.assertEqual(len(day["slots"]), 4)
         self.assertEqual(day["slots"][0]["startAt"][11:16], "09:00")
 
+    def test_location_booking_availability_overrides_dealer_settings(self):
+        self.location.booking_availability = {
+            "slotLengthMinutes": 60,
+            "maxBookingsPerDay": 1,
+            "weeklyHours": {
+                "mon": {"enabled": True, "open": "13:00", "close": "15:00"},
+            },
+            "blockedDates": [],
+        }
+        self.location.save(update_fields=["booking_availability"])
+
+        target_day = self._next_weekday(0)
+        payload = build_vehicle_booking_availability(
+            self.vehicle,
+            from_date=target_day,
+            to_date=target_day,
+        )
+
+        self.assertEqual(payload["slotLengthMinutes"], 60)
+        self.assertEqual(payload["days"][0]["slots"][0]["startAt"][11:16], "13:00")
+
     def test_booked_slot_is_unavailable(self):
         target_day = self._next_weekday(0)
-        slot_start = datetime.combine(target_day, datetime.strptime("09:00", "%H:%M").time())
-        slot_start = timezone.make_aware(slot_start)
+        slot_start = datetime.combine(
+            target_day,
+            datetime.strptime("09:00", "%H:%M").time(),
+            tzinfo=ZoneInfo("Africa/Lagos"),
+        )
         booking = Booking.objects.create(
             vehicle=self.vehicle,
             dealer=self.dealer,
@@ -119,3 +155,35 @@ class BookingAvailabilityTests(TestCase):
         self.assertFalse(
             is_booking_slot_available(self.dealer, slot_start),
         )
+
+    def test_dealer_can_mark_booking_attendance(self):
+        self.client.force_authenticate(self.staff)
+        slot_start = timezone.now() + timedelta(days=1)
+        booking = Booking.objects.create(
+            vehicle=self.vehicle,
+            dealer=self.dealer,
+            location=self.location,
+            buyer_name="Ada",
+            buyer_phone="+2348090000000",
+            scheduled_at=slot_start,
+            status=Booking.Status.CONFIRMED,
+        )
+        appointment = Appointment.objects.create(
+            booking=booking,
+            dealer=self.dealer,
+            location=self.location,
+            vehicle=self.vehicle,
+            title="Inspection",
+            scheduled_at=slot_start,
+        )
+
+        show_response = self.client.patch(f"/v1/appointments/{appointment.id}/mark-show")
+        self.assertEqual(show_response.status_code, 200)
+        booking.refresh_from_db()
+        self.assertEqual(booking.attendance_status, Booking.AttendanceStatus.SHOW)
+        self.assertIsNotNone(booking.attended_at)
+
+        no_show_response = self.client.patch(f"/v1/appointments/{appointment.id}/mark-no-show")
+        self.assertEqual(no_show_response.status_code, 200)
+        booking.refresh_from_db()
+        self.assertEqual(booking.attendance_status, Booking.AttendanceStatus.NO_SHOW)

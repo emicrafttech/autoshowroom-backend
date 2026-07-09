@@ -1,8 +1,10 @@
 """Media processing for feed-optimized delivery.
 
-Videos are transcoded to 720p H.264 (~1.5 Mbps) with faststart so playback
-can begin before the full file downloads. Photos are resized to a 1200px max
-edge and re-encoded as JPEG quality 80. Video posters are captured at 1s.
+Videos are transcoded to ~720p H.264 (~800 kbps) with faststart so playback
+can begin before the full file downloads. Target bitrate is tuned for mobile
+cellular feeds (Instagram/TikTok-class progressive delivery without ABR).
+Photos are resized to a 1200px max edge and re-encoded as JPEG quality 80.
+Video posters are captured at 1s.
 """
 
 from __future__ import annotations
@@ -19,11 +21,11 @@ VIDEO_MAX_LONG_EDGE = 1280
 VIDEO_MAX_FPS = 30
 VIDEO_PROFILE = "main"
 VIDEO_LEVEL = "4.0"
-VIDEO_CRF = 20
-VIDEO_TARGET_BITRATE = "1500k"
-VIDEO_MAX_BITRATE = "2500k"
-VIDEO_BUFFER_SIZE = "5000k"
-VIDEO_AUDIO_BITRATE = "128k"
+VIDEO_CRF = 23
+VIDEO_TARGET_BITRATE = "800k"
+VIDEO_MAX_BITRATE = "1200k"
+VIDEO_BUFFER_SIZE = "2400k"
+VIDEO_AUDIO_BITRATE = "96k"
 
 IMAGE_MAX_EDGE = 1200
 IMAGE_JPEG_QUALITY = 80

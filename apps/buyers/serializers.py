@@ -4,6 +4,7 @@ from django.conf import settings
 from django.utils import timezone
 from rest_framework import serializers
 
+from apps.common.client_platform import buyer_token_ttl_seconds, is_mobile_client
 from apps.marketplace.serializers import PublicVehicleSerializer
 from apps.marketplace.views import public_vehicle_queryset
 
@@ -63,7 +64,12 @@ class BuyerSignInVerifySerializer(serializers.Serializer):
         if name and not buyer.name:
             buyer.name = name
             buyer.save(update_fields=["name"])
-        return {"buyer": buyer, "token": create_buyer_token(buyer)}
+        request = self.context.get("request")
+        token = create_buyer_token(
+            buyer,
+            ttl_seconds=buyer_token_ttl_seconds(mobile=is_mobile_client(request)),
+        )
+        return {"buyer": buyer, "token": token}
 
 
 class BuyerProfileSerializer(serializers.ModelSerializer):

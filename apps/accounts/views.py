@@ -10,6 +10,7 @@ from rest_framework.views import APIView
 from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.tokens import RefreshToken
 
+from apps.common.client_platform import dealer_refresh_lifetime, is_mobile_client
 from apps.common.permissions import IsActiveDealerStaff, IsDealerStaff
 from apps.common.views import EnvelopeMixin
 from apps.dealers.models import Dealer, DealerLocation
@@ -26,11 +27,14 @@ from .serializers import (
     EmailVerificationSendSerializer,
     EmailVerificationVerifySerializer,
     LoginSerializer,
+    PasswordResetConfirmSerializer,
+    PasswordResetRequestSerializer,
     RefreshSerializer,
     SessionLocationSerializer,
     StaffInvitationPreviewSerializer,
 )
 from apps.notifications.email_verification import issue_dealer_email_verification
+from .tokens import generate_invite_token, hash_invite_token, password_reset_expiry
 
 
 def resolve_active_location(user: StaffUser):
@@ -42,8 +46,14 @@ def resolve_active_location(user: StaffUser):
     )
 
 
-def issue_token_pair(user: StaffUser, active_location=None) -> dict[str, str]:
+def issue_token_pair(
+    user: StaffUser,
+    active_location=None,
+    *,
+    mobile: bool = False,
+) -> dict[str, str]:
     refresh = RefreshToken.for_user(user)
+    refresh.set_exp(lifetime=dealer_refresh_lifetime(mobile=mobile))
     refresh["dealer_id"] = str(user.dealer_id) if user.dealer_id else None
     refresh["role"] = user.role
     refresh["location_id"] = str(active_location.id) if active_location else None
@@ -51,6 +61,14 @@ def issue_token_pair(user: StaffUser, active_location=None) -> dict[str, str]:
         "accessToken": str(refresh.access_token),
         "refreshToken": str(refresh),
     }
+
+
+def _issue_token_pair_for_request(request, user: StaffUser, active_location=None):
+    return issue_token_pair(
+        user,
+        active_location,
+        mobile=is_mobile_client(request),
+    )
 
 
 class LoginView(EnvelopeMixin, APIView):
@@ -61,7 +79,7 @@ class LoginView(EnvelopeMixin, APIView):
         serializer.is_valid(raise_exception=True)
         user = serializer.validated_data["user"]
         active_location = resolve_active_location(user)
-        tokens = issue_token_pair(user, active_location)
+        tokens = _issue_token_pair_for_request(request, user, active_location)
         return Response(
             {
                 **tokens,
@@ -97,7 +115,7 @@ class DealerSignupVerifyView(EnvelopeMixin, APIView):
         serializer.is_valid(raise_exception=True)
         user = serializer.save()
         active_location = resolve_active_location(user)
-        tokens = issue_token_pair(user, active_location)
+        tokens = _issue_token_pair_for_request(request, user, active_location)
         return Response(
             {
                 **tokens,
@@ -124,7 +142,7 @@ class DealerSignupSetupView(EnvelopeMixin, APIView):
         if not user.email_verified_at:
             dev_token = issue_dealer_email_verification(user)
         active_location = resolve_active_location(user)
-        tokens = issue_token_pair(user, active_location)
+        tokens = _issue_token_pair_for_request(request, user, active_location)
         response = {
             **tokens,
             "user": AuthUserSerializer(
@@ -163,7 +181,79 @@ class RefreshView(EnvelopeMixin, APIView):
 
         user = get_object_or_404(StaffUser, id=refresh["user_id"], is_active=True)
         active_location = resolve_active_location(user)
-        return Response(issue_token_pair(user, active_location))
+        return Response(_issue_token_pair_for_request(request, user, active_location))
+
+
+class PasswordResetRequestView(EnvelopeMixin, APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = PasswordResetRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        user = (
+            StaffUser.objects.select_related("dealer")
+            .filter(
+                email=serializer.validated_data["email"],
+                dealer__isnull=False,
+                is_active=True,
+            )
+            .first()
+        )
+        dev_token = None
+        if user:
+            token = generate_invite_token()
+            user.password_reset_token_hash = hash_invite_token(token)
+            user.password_reset_expires_at = password_reset_expiry()
+            user.save(
+                update_fields=[
+                    "password_reset_token_hash",
+                    "password_reset_expires_at",
+                    "updated_at",
+                ]
+            )
+            from apps.notifications.services import notify_dealer_password_reset
+
+            notify_dealer_password_reset(user, token)
+            dev_token = token
+        response = {"ok": True}
+        if settings.DEBUG and dev_token:
+            response["devToken"] = dev_token
+        return Response(response)
+
+
+class PasswordResetConfirmView(EnvelopeMixin, APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = PasswordResetConfirmSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        user = serializer.context["reset_user"]
+        user.set_password(serializer.validated_data["password"])
+        user.must_change_password = False
+        user.password_reset_token_hash = None
+        user.password_reset_expires_at = None
+        user.password_changed_at = timezone.now()
+        user.save(
+            update_fields=[
+                "password",
+                "must_change_password",
+                "password_reset_token_hash",
+                "password_reset_expires_at",
+                "password_changed_at",
+                "updated_at",
+            ]
+        )
+        active_location = resolve_active_location(user)
+        tokens = _issue_token_pair_for_request(request, user, active_location)
+        return Response(
+            {
+                **tokens,
+                "user": AuthUserSerializer(
+                    user,
+                    context={"active_location": active_location},
+                ).data,
+            }
+        )
 
 
 class MeView(EnvelopeMixin, APIView):
@@ -279,7 +369,7 @@ class AcceptStaffInvitationView(EnvelopeMixin, APIView):
         )
 
         active_location = resolve_active_location(user)
-        tokens = issue_token_pair(user, active_location)
+        tokens = _issue_token_pair_for_request(request, user, active_location)
         return Response(
             {
                 **tokens,
@@ -323,7 +413,7 @@ class SessionLocationView(EnvelopeMixin, APIView):
         location = serializer.context["location"]
         request.user.preferred_location = location
         request.user.save(update_fields=["preferred_location", "updated_at"])
-        tokens = issue_token_pair(request.user, location)
+        tokens = _issue_token_pair_for_request(request, request.user, location)
         return Response(
             {
                 **tokens,

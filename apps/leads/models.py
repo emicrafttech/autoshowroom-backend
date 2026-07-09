@@ -10,6 +10,7 @@ class Lead(models.Model):
         CALL = "call", "Call"
         BOOKING = "booking", "Booking"
         NOTIFY_ME = "notify_me", "Notify me"
+        WALK_IN = "walk_in", "Walk-in"
 
     class Stage(models.TextChoices):
         NEW = "new", "New"
@@ -29,6 +30,7 @@ class Lead(models.Model):
     message = models.TextField(null=True, blank=True)
     source = models.CharField(max_length=20, choices=Source.choices, default=Source.FEED)
     stage = models.CharField(max_length=20, choices=Stage.choices, default=Stage.NEW)
+    follow_up_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -41,6 +43,18 @@ class Lead(models.Model):
 
     def __str__(self) -> str:
         return f"{self.name} - {self.phone}"
+
+
+class LeadNote(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    lead = models.ForeignKey(Lead, on_delete=models.CASCADE, related_name="notes")
+    author = models.ForeignKey("accounts.StaffUser", on_delete=models.SET_NULL, null=True, blank=True, related_name="lead_notes")
+    body = models.TextField()
+    shared_with_team = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
 
 
 class NotifyMeRequest(models.Model):

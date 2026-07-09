@@ -1,6 +1,8 @@
 from rest_framework import serializers
 
-from .models import BillingDispute, BillingPlan, Invoice, PaymentEvent, Subscription
+from apps.dealers.models import Dealer
+
+from .models import BillingDispute, BillingPlan, EarlyPlanTermination, Invoice, PaymentEvent, Subscription
 
 
 class BillingPlanSerializer(serializers.ModelSerializer):
@@ -8,7 +10,7 @@ class BillingPlanSerializer(serializers.ModelSerializer):
     listingLimit = serializers.IntegerField(source="listing_limit", required=False)
     standLimit = serializers.IntegerField(source="stand_limit", required=False)
     isActive = serializers.BooleanField(source="is_active", required=False)
-    activeDealerCount = serializers.IntegerField(read_only=True, required=False)
+    activeDealerCount = serializers.SerializerMethodField()
     createdAt = serializers.DateTimeField(source="created_at", read_only=True)
     updatedAt = serializers.DateTimeField(source="updated_at", read_only=True)
 
@@ -26,6 +28,16 @@ class BillingPlanSerializer(serializers.ModelSerializer):
             "createdAt",
             "updatedAt",
         ]
+
+    def get_activeDealerCount(self, obj):
+        active_subscription_dealer_ids = set(
+            obj.subscriptions.filter(status=Subscription.Status.ACTIVE).values_list(
+                "dealer_id",
+                flat=True,
+            )
+        )
+        plan_dealer_ids = set(Dealer.objects.filter(plan_id=obj.id).values_list("id", flat=True))
+        return len(active_subscription_dealer_ids | plan_dealer_ids)
 
 
 class SubscriptionSerializer(serializers.ModelSerializer):
@@ -66,6 +78,31 @@ class InvoiceSerializer(serializers.ModelSerializer):
     class Meta:
         model = Invoice
         fields = ["id", "amountNgn", "status", "pdfUrl", "issuedAt"]
+
+
+class EarlyPlanTerminationSerializer(serializers.ModelSerializer):
+    dealerName = serializers.CharField(source="dealer.name", read_only=True)
+    planName = serializers.CharField(source="plan.name", read_only=True)
+    requestedAt = serializers.DateTimeField(source="requested_at", read_only=True)
+    decidedAt = serializers.DateTimeField(source="decided_at", read_only=True)
+    decisionNote = serializers.CharField(source="decision_note", required=False, allow_blank=True)
+
+    class Meta:
+        model = EarlyPlanTermination
+        fields = [
+            "id",
+            "dealer",
+            "dealerName",
+            "subscription",
+            "plan",
+            "planName",
+            "reason",
+            "status",
+            "requestedAt",
+            "decidedAt",
+            "decisionNote",
+        ]
+        read_only_fields = ["id", "requestedAt", "decidedAt"]
 
 
 class CheckoutSerializer(serializers.Serializer):

@@ -28,6 +28,39 @@ class AuditLog(models.Model):
         ordering = ["-created_at"]
 
 
+class DealerMessageThread(models.Model):
+    class Status(models.TextChoices):
+        OPEN = "open", "Open"
+        CLOSED = "closed", "Closed"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    dealer = models.ForeignKey("dealers.Dealer", on_delete=models.CASCADE, related_name="message_threads")
+    subject = models.CharField(max_length=200)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.OPEN)
+    created_by = models.ForeignKey("accounts.StaffUser", on_delete=models.SET_NULL, null=True, blank=True, related_name="created_dealer_threads")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-updated_at"]
+
+
+class DealerMessage(models.Model):
+    class SenderType(models.TextChoices):
+        PLATFORM = "platform", "Platform"
+        DEALER = "dealer", "Dealer"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    thread = models.ForeignKey(DealerMessageThread, on_delete=models.CASCADE, related_name="messages")
+    sender = models.ForeignKey("accounts.StaffUser", on_delete=models.SET_NULL, null=True, blank=True, related_name="dealer_thread_messages")
+    sender_type = models.CharField(max_length=20, choices=SenderType.choices)
+    body = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["created_at"]
+
+
 class ContentReport(models.Model):
     class Status(models.TextChoices):
         OPEN = "open", "Open"

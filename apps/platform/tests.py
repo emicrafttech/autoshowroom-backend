@@ -16,6 +16,8 @@ from apps.platform.models import (
     AuditLog,
     ContentReport,
     DealerSanction,
+    DealerMessage,
+    DealerMessageThread,
     PlatformRole,
     PlatformSetting,
     SanctionAppeal,
@@ -419,6 +421,45 @@ class CsvCoverageCompletionTests(TestCase):
         self.assertTrue(
             AuditLog.objects.filter(action="dealer_document.reject", target_id=str(document.id)).exists()
         )
+
+    def test_approving_premises_document_moves_primary_stand_to_pending_review(self):
+        self.client.force_authenticate(self.platform_user)
+        self.location.premises_verification_status = DealerLocation.PremisesVerificationStatus.NOT_SUBMITTED
+        self.location.save(update_fields=["premises_verification_status", "updated_at"])
+        document = DealerVerificationDocument.objects.create(
+            dealer=self.dealer,
+            kind=DealerVerificationDocument.Kind.PREMISES,
+            title="Premises proof",
+            file_url="https://example.com/premises.pdf",
+        )
+
+        response = self.client.patch(f"/v1/platform/dealer-documents/{document.id}/approve")
+
+        self.assertEqual(response.status_code, 200)
+        self.location.refresh_from_db()
+        self.assertEqual(
+            self.location.premises_verification_status,
+            DealerLocation.PremisesVerificationStatus.PENDING,
+        )
+
+    def test_platform_can_approve_pending_stand_changes(self):
+        self.client.force_authenticate(self.platform_user)
+        self.location.pending_changes = {"name": "Approved Stand", "address": "Approved address"}
+        self.location.pending_changes_submitted_at = timezone.now()
+        self.location.save(update_fields=["pending_changes", "pending_changes_submitted_at", "updated_at"])
+
+        queue_response = self.client.get("/v1/platform/locations/pending-changes")
+        self.assertEqual(queue_response.status_code, 200)
+        self.assertEqual(queue_response.json()["data"][0]["pendingChanges"]["name"], "Approved Stand")
+
+        response = self.client.patch(f"/v1/platform/locations/{self.location.id}/approve-changes")
+
+        self.assertEqual(response.status_code, 200)
+        self.location.refresh_from_db()
+        self.assertEqual(self.location.name, "Approved Stand")
+        self.assertEqual(self.location.address, "Approved address")
+        self.assertIsNone(self.location.pending_changes)
+        self.assertIsNotNone(self.location.pending_changes_reviewed_at)
 
     def test_platform_dealer_payload_returns_latest_document_per_kind(self):
         self.client.force_authenticate(self.platform_user)
@@ -833,3 +874,33 @@ class CsvCoverageCompletionTests(TestCase):
             format="json",
         )
         self.assertEqual(refund_response.status_code, 202)
+
+    def test_platform_can_start_and_reply_to_dealer_message_thread(self):
+        self.client.force_authenticate(self.platform_user)
+
+        with patch("apps.notifications.services.notify_platform_dealer_message"):
+            start_response = self.client.post(
+                f"/v1/platform/dealers/{self.dealer.id}/message",
+                {"subject": "Verification update", "message": "Please upload the missing premise image."},
+                format="json",
+            )
+
+        self.assertEqual(start_response.status_code, 200)
+        thread = DealerMessageThread.objects.get(dealer=self.dealer)
+        self.assertEqual(thread.subject, "Verification update")
+        self.assertEqual(thread.messages.count(), 1)
+        self.assertEqual(thread.messages.first().sender_type, DealerMessage.SenderType.PLATFORM)
+
+        list_response = self.client.get(f"/v1/platform/dealers/{self.dealer.id}/messages")
+        self.assertEqual(list_response.status_code, 200)
+        self.assertEqual(list_response.json()["data"][0]["messages"][0]["body"], "Please upload the missing premise image.")
+
+        reply_response = self.client.post(
+            f"/v1/platform/dealers/{self.dealer.id}/messages",
+            {"threadId": str(thread.id), "body": "Following up on this."},
+            format="json",
+        )
+
+        self.assertEqual(reply_response.status_code, 201)
+        self.assertEqual(thread.messages.count(), 2)
+        self.assertEqual(reply_response.json()["data"]["messages"][-1]["senderType"], "platform")

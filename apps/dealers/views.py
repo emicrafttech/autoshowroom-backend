@@ -1,4 +1,5 @@
 from django.db import transaction
+from django.db.models import Count, Sum
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import status, viewsets
@@ -23,6 +24,8 @@ from apps.bookings.serializers import (
 from apps.common.permissions import IsActiveDealerStaff, IsDealerStaff
 from apps.common.views import EnvelopeMixin
 from apps.platform.models import DataSubjectRequest, DealerSanction, SanctionAppeal
+from apps.platform.models import DealerMessage, DealerMessageThread
+from apps.platform.serializers import DealerMessageThreadSerializer
 from apps.platform.views import IsPlatformStaff, write_audit
 
 from .models import Dealer, DealerLocation, DealerVerificationDocument
@@ -68,12 +71,22 @@ class DealerBookingAvailabilityView(EnvelopeMixin, APIView):
     def get_object(self):
         return get_object_or_404(Dealer, id=self.request.user.dealer_id)
 
+    def get_location(self, dealer, location_id=None):
+        if location_id:
+            return get_object_or_404(DealerLocation, id=location_id, dealer=dealer)
+        return dealer.locations.filter(is_primary=True).first() or dealer.locations.first()
+
     def get(self, request):
-        return Response(dealer_booking_availability_payload(self.get_object()))
+        dealer = self.get_object()
+        location = self.get_location(dealer, request.query_params.get("locationId"))
+        return Response(dealer_booking_availability_payload(dealer, location))
 
     def patch(self, request):
         dealer = self.get_object()
-        current = dealer_booking_availability_payload(dealer)
+        location = self.get_location(dealer, request.data.get("locationId"))
+        if not location:
+            raise ValidationError("Create a stand before setting booking availability.")
+        current = dealer_booking_availability_payload(dealer, location)
         incoming = request.data if isinstance(request.data, dict) else {}
         merged = {**current, **incoming}
         if isinstance(incoming.get("weeklyHours"), dict):
@@ -83,9 +96,9 @@ class DealerBookingAvailabilityView(EnvelopeMixin, APIView):
             }
         serializer = DealerBookingAvailabilitySerializer(data=merged)
         serializer.is_valid(raise_exception=True)
-        dealer.booking_availability = serializer.validated_data
-        dealer.save(update_fields=["booking_availability", "updated_at"])
-        return Response(dealer_booking_availability_payload(dealer))
+        location.booking_availability = serializer.validated_data
+        location.save(update_fields=["booking_availability", "updated_at"])
+        return Response(dealer_booking_availability_payload(dealer, location))
 
 
 class DealerContextView(EnvelopeMixin, APIView):
@@ -116,10 +129,71 @@ class DealerContextView(EnvelopeMixin, APIView):
         )
 
 
+class DealerInsightsView(EnvelopeMixin, APIView):
+    permission_classes = [IsActiveDealerStaff]
+
+    def get(self, request):
+        dealer = request.user.dealer
+        from apps.leads.models import Lead
+        from apps.vehicles.models import Vehicle
+
+        sold = Vehicle.objects.filter(dealer=dealer, status=Vehicle.Status.SOLD)
+        active_inventory = Vehicle.objects.filter(dealer=dealer).exclude(status=Vehicle.Status.SOLD)
+        return Response(
+            {
+                "soldValueNgn": sold.aggregate(total=Sum("price_ngn"))["total"] or 0,
+                "soldCount": sold.count(),
+                "leadSources": list(
+                    Lead.objects.filter(dealer=dealer)
+                    .values("source")
+                    .annotate(count=Count("id"))
+                    .order_by("source")
+                ),
+                "carsByMakeModel": list(
+                    active_inventory.values("make", "model")
+                    .annotate(count=Count("id"))
+                    .order_by("make", "model")
+                ),
+            }
+        )
+
+
+class DealerMessageInboxView(EnvelopeMixin, APIView):
+    permission_classes = [IsActiveDealerStaff]
+
+    def get(self, request):
+        threads = DealerMessageThread.objects.filter(dealer_id=request.user.dealer_id).prefetch_related("messages", "messages__sender")
+        return Response(DealerMessageThreadSerializer(threads, many=True).data)
+
+    def post(self, request):
+        body = request.data.get("body", "").strip()
+        if not body:
+            raise ValidationError({"body": "Message body is required."})
+        thread = get_object_or_404(DealerMessageThread, id=request.data.get("threadId"), dealer_id=request.user.dealer_id)
+        DealerMessage.objects.create(
+            thread=thread,
+            sender=request.user,
+            sender_type=DealerMessage.SenderType.DEALER,
+            body=body,
+        )
+        thread.updated_at = timezone.now()
+        thread.save(update_fields=["updated_at"])
+        return Response(DealerMessageThreadSerializer(thread).data, status=status.HTTP_201_CREATED)
+
+
 class DealerLocationViewSet(EnvelopeMixin, viewsets.ModelViewSet):
     serializer_class = DealerLocationSerializer
     permission_classes = [IsActiveDealerStaff]
     http_method_names = ["get", "post", "patch", "delete", "head", "options"]
+    review_required_fields = {
+        "name",
+        "area",
+        "city_slug",
+        "district_slug",
+        "address",
+        "latitude",
+        "longitude",
+    }
 
     def get_queryset(self):
         return DealerLocation.objects.filter(dealer_id=self.request.user.dealer_id)
@@ -150,8 +224,43 @@ class DealerLocationViewSet(EnvelopeMixin, viewsets.ModelViewSet):
             ),
         )
 
+    def _json_value(self, value):
+        return str(value) if hasattr(value, "as_tuple") else value
+
+    def _store_pending_changes(self, location, serializer):
+        direct_updates = {}
+        pending_changes = dict(location.pending_changes or {})
+        for field, value in serializer.validated_data.items():
+            if field in self.review_required_fields:
+                next_value = self._json_value(value)
+                if str(getattr(location, field, "")) != str(next_value):
+                    pending_changes[field] = next_value
+            else:
+                direct_updates[field] = value
+
+        for field, value in direct_updates.items():
+            setattr(location, field, value)
+        if direct_updates:
+            location.save(update_fields=[*direct_updates.keys(), "updated_at"])
+
+        if pending_changes:
+            location.pending_changes = pending_changes
+            location.pending_changes_submitted_at = timezone.now()
+            location.pending_changes_reviewed_at = None
+            location.pending_changes_rejection_reason = ""
+            location.save(
+                update_fields=[
+                    "pending_changes",
+                    "pending_changes_submitted_at",
+                    "pending_changes_reviewed_at",
+                    "pending_changes_rejection_reason",
+                    "updated_at",
+                ]
+            )
+        return location
+
     def perform_update(self, serializer):
-        location = serializer.save()
+        location = self._store_pending_changes(serializer.instance, serializer)
         if location.evidence_files and location.premises_verification_status in [
             DealerLocation.PremisesVerificationStatus.NOT_SUBMITTED,
             DealerLocation.PremisesVerificationStatus.REJECTED,

@@ -31,6 +31,8 @@ from .models import (
     ContentReport,
     ContentReportNote,
     DataSubjectRequest,
+    DealerMessage,
+    DealerMessageThread,
     DealerSanction,
     PlatformRole,
     PlatformSetting,
@@ -43,6 +45,7 @@ from .serializers import (
     ContentReportNoteSerializer,
     ContentReportSerializer,
     DataSubjectRequestSerializer,
+    DealerMessageThreadSerializer,
     DealerSanctionSerializer,
     PlatformSettingSerializer,
     PlatformRoleSerializer,
@@ -626,11 +629,44 @@ class PlatformDealerMessageView(EnvelopeMixin, APIView):
                 for recipient in recipients
             ]
         )
+        thread = DealerMessageThread.objects.create(dealer=dealer, subject=subject, created_by=request.user)
+        DealerMessage.objects.create(
+            thread=thread,
+            sender=request.user,
+            sender_type=DealerMessage.SenderType.PLATFORM,
+            body=message,
+        )
         from apps.notifications.services import notify_platform_dealer_message
 
         notify_platform_dealer_message(dealer, subject, message)
         write_audit(request.user, "dealer.message_sent", dealer, {"recipientCount": len(notifications)})
-        return Response({"sent": len(notifications), "dealerId": str(dealer.id)})
+        return Response({"sent": len(notifications), "dealerId": str(dealer.id), "threadId": str(thread.id)})
+
+
+class PlatformDealerMessageThreadView(EnvelopeMixin, APIView):
+    permission_classes = [HasPlatformCapability]
+    required_capability = "dealers.read"
+
+    def get(self, request, dealer_id):
+        dealer = get_object_or_404(Dealer, id=dealer_id)
+        threads = DealerMessageThread.objects.filter(dealer=dealer).prefetch_related("messages", "messages__sender")
+        return Response(DealerMessageThreadSerializer(threads, many=True).data)
+
+    def post(self, request, dealer_id):
+        dealer = get_object_or_404(Dealer, id=dealer_id)
+        body = request.data.get("body", "").strip()
+        if not body:
+            raise serializers.ValidationError({"body": "Message body is required."})
+        thread = get_object_or_404(DealerMessageThread, id=request.data.get("threadId"), dealer=dealer)
+        DealerMessage.objects.create(
+            thread=thread,
+            sender=request.user,
+            sender_type=DealerMessage.SenderType.PLATFORM,
+            body=body,
+        )
+        thread.updated_at = timezone.now()
+        thread.save(update_fields=["updated_at"])
+        return Response(DealerMessageThreadSerializer(thread).data, status=status.HTTP_201_CREATED)
 
 
 class PlatformDealerSuspendView(EnvelopeMixin, APIView):
@@ -672,6 +708,15 @@ class PlatformDealerDocumentActionView(EnvelopeMixin, APIView):
         if self.action_name == "approve":
             document.status = DealerVerificationDocument.Status.APPROVED
             document.rejection_reason = ""
+            if document.kind == DealerVerificationDocument.Kind.PREMISES:
+                primary_location = document.dealer.locations.filter(is_primary=True).first()
+                if (
+                    primary_location
+                    and primary_location.premises_verification_status
+                    != DealerLocation.PremisesVerificationStatus.VERIFIED
+                ):
+                    primary_location.premises_verification_status = DealerLocation.PremisesVerificationStatus.PENDING
+                    primary_location.save(update_fields=["premises_verification_status", "updated_at"])
         elif self.action_name == "reject":
             reason = request.data.get("reason", "").strip()
             if not reason:
@@ -709,6 +754,72 @@ class PlatformLocationView(EnvelopeMixin, APIView):
 
     def get(self, request, location_id):
         return Response(DealerLocationSerializer(self.get_location(location_id)).data)
+
+
+class PlatformLocationPendingChangesQueueView(EnvelopeMixin, APIView):
+    permission_classes = [HasPlatformCapability]
+    required_capability = "premises.read"
+
+    def get(self, request):
+        locations = DealerLocation.objects.select_related("dealer").filter(
+            pending_changes__isnull=False,
+        )
+        return Response(DealerLocationSerializer(locations, many=True).data)
+
+
+class PlatformLocationPendingChangesActionView(PlatformLocationView):
+    http_method_names = ["patch", "options"]
+    required_capability = "premises.write"
+    action_name = "approve-changes"
+
+    def patch(self, request, location_id):
+        location = self.get_location(location_id)
+        if not location.pending_changes:
+            raise serializers.ValidationError({"detail": "This stand has no pending changes."})
+
+        if self.action_name == "approve-changes":
+            update_fields = []
+            for field, value in location.pending_changes.items():
+                setattr(location, field, value)
+                update_fields.append(field)
+            location.pending_changes = None
+            location.pending_changes_reviewed_at = timezone.now()
+            location.pending_changes_rejection_reason = ""
+            update_fields.extend(
+                [
+                    "pending_changes",
+                    "pending_changes_reviewed_at",
+                    "pending_changes_rejection_reason",
+                    "updated_at",
+                ]
+            )
+            location.save(update_fields=update_fields)
+        else:
+            reason = request.data.get("reason", "").strip()
+            if not reason:
+                raise serializers.ValidationError({"reason": "A rejection reason is required."})
+            location.pending_changes = None
+            location.pending_changes_reviewed_at = timezone.now()
+            location.pending_changes_rejection_reason = reason
+            location.save(
+                update_fields=[
+                    "pending_changes",
+                    "pending_changes_reviewed_at",
+                    "pending_changes_rejection_reason",
+                    "updated_at",
+                ]
+            )
+
+        write_audit(request.user, f"location.{self.action_name}", location, {"reason": request.data.get("reason", "")})
+        return Response(DealerLocationSerializer(location).data)
+
+
+class PlatformLocationApproveChangesView(PlatformLocationPendingChangesActionView):
+    action_name = "approve-changes"
+
+
+class PlatformLocationRejectChangesView(PlatformLocationPendingChangesActionView):
+    action_name = "reject-changes"
 
 
 class PlatformLocationActionView(PlatformLocationView):

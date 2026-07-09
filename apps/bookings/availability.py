@@ -70,8 +70,9 @@ def normalize_booking_availability(raw: dict | None) -> dict:
     return normalized
 
 
-def get_dealer_booking_availability(dealer) -> dict:
-    return normalize_booking_availability(getattr(dealer, "booking_availability", None))
+def get_dealer_booking_availability(dealer, location=None) -> dict:
+    location_availability = getattr(location, "booking_availability", None) if location else None
+    return normalize_booking_availability(location_availability or getattr(dealer, "booking_availability", None))
 
 
 def _normalize_time(value, fallback: str) -> str:
@@ -100,8 +101,8 @@ def _dealer_timezone(config: dict) -> ZoneInfo:
         return ZoneInfo(DEFAULT_TIMEZONE)
 
 
-def _active_appointments(dealer, start: datetime, end: datetime):
-    return (
+def _active_appointments(dealer, start: datetime, end: datetime, location=None):
+    queryset = (
         Appointment.objects.filter(
             dealer=dealer,
             scheduled_at__gte=start,
@@ -110,17 +111,20 @@ def _active_appointments(dealer, start: datetime, end: datetime):
         .select_related("booking")
         .exclude(booking__status=Booking.Status.CANCELLED)
     )
+    if location:
+        queryset = queryset.filter(location=location)
+    return queryset
 
 
-def _day_booking_count(dealer, day: date, tz: ZoneInfo) -> int:
+def _day_booking_count(dealer, day: date, tz: ZoneInfo, location=None) -> int:
     start = datetime.combine(day, time.min, tzinfo=tz)
     end = start + timedelta(days=1)
-    return _active_appointments(dealer, start, end).count()
+    return _active_appointments(dealer, start, end, location).count()
 
 
-def _slot_is_taken(dealer, slot_start: datetime, slot_end: datetime) -> bool:
+def _slot_is_taken(dealer, slot_start: datetime, slot_end: datetime, location=None) -> bool:
     return (
-        _active_appointments(dealer, slot_start, slot_end)
+        _active_appointments(dealer, slot_start, slot_end, location)
         .exists()
     )
 
@@ -130,8 +134,9 @@ def generate_booking_availability(
     dealer,
     from_date: date,
     to_date: date,
+    location=None,
 ) -> dict:
-    config = get_dealer_booking_availability(dealer)
+    config = get_dealer_booking_availability(dealer, location)
     tz = _dealer_timezone(config)
     slot_length = timedelta(minutes=config["slotLengthMinutes"])
     max_per_day = config["maxBookingsPerDay"]
@@ -147,7 +152,7 @@ def generate_booking_availability(
         date_key = current.isoformat()
         day_config = config["weeklyHours"].get(weekday_key(current), {})
         enabled = bool(day_config.get("enabled"))
-        day_count = _day_booking_count(dealer, current, tz)
+        day_count = _day_booking_count(dealer, current, tz, location)
         day_full = day_count >= max_per_day
         blocked = date_key in blocked_dates
 
@@ -159,7 +164,7 @@ def generate_booking_availability(
             day_close = datetime.combine(current, time(close_hour, close_minute), tzinfo=tz)
             while slot_start + slot_length <= day_close:
                 slot_end = slot_start + slot_length
-                available = slot_start >= earliest and not _slot_is_taken(dealer, slot_start, slot_end)
+                available = slot_start >= earliest and not _slot_is_taken(dealer, slot_start, slot_end, location)
                 slot_payload = {
                     "startAt": slot_start.isoformat(),
                     "endAt": slot_end.isoformat(),
@@ -189,13 +194,18 @@ def generate_booking_availability(
 
 
 def build_vehicle_booking_availability(vehicle, *, from_date: date | None = None, to_date: date | None = None) -> dict:
-    tz = _dealer_timezone(get_dealer_booking_availability(vehicle.dealer))
+    tz = _dealer_timezone(get_dealer_booking_availability(vehicle.dealer, vehicle.location))
     today = timezone.now().astimezone(tz).date()
     start = from_date or today
     end = to_date or (start + timedelta(days=13))
     if end < start:
         end = start
-    payload = generate_booking_availability(dealer=vehicle.dealer, from_date=start, to_date=end)
+    payload = generate_booking_availability(
+        dealer=vehicle.dealer,
+        from_date=start,
+        location=vehicle.location,
+        to_date=end,
+    )
     payload.update(
         {
             "vehicleId": str(vehicle.id),
@@ -206,14 +216,14 @@ def build_vehicle_booking_availability(vehicle, *, from_date: date | None = None
     return payload
 
 
-def is_booking_slot_available(dealer, scheduled_at: datetime) -> bool:
+def is_booking_slot_available(dealer, scheduled_at: datetime, location=None) -> bool:
     if timezone.is_naive(scheduled_at):
         scheduled_at = timezone.make_aware(scheduled_at, timezone.get_current_timezone())
-    config = get_dealer_booking_availability(dealer)
+    config = get_dealer_booking_availability(dealer, location)
     tz = _dealer_timezone(config)
     local = scheduled_at.astimezone(tz)
     day = local.date()
-    payload = generate_booking_availability(dealer=dealer, from_date=day, to_date=day)
+    payload = generate_booking_availability(dealer=dealer, from_date=day, location=location, to_date=day)
     day_payload = payload["days"][0] if payload["days"] else None
     if not day_payload:
         return False

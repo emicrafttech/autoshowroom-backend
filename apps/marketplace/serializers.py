@@ -19,7 +19,7 @@ class PublicDealerSummarySerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Dealer
-        fields = ["id", "slug", "name", "area", "verifiedBadge", "logoUrl"]
+        fields = ["id", "slug", "name", "area", "verifiedBadge", "logoUrl", "phone"]
 
 
 class PublicLocationSerializer(serializers.ModelSerializer):
@@ -91,7 +91,6 @@ class PublicDealerDetailSerializer(PublicDealerSummarySerializer):
     class Meta(PublicDealerSummarySerializer.Meta):
         fields = PublicDealerSummarySerializer.Meta.fields + [
             "description",
-            "phone",
             "whatsapp",
             "hours",
             "locations",

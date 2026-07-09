@@ -1,5 +1,6 @@
 from datetime import timedelta
 from unittest.mock import patch
+from zoneinfo import ZoneInfo
 
 from django.test import TestCase
 from django.utils import timezone
@@ -9,7 +10,7 @@ from apps.accounts.models import StaffUser
 from apps.bookings.models import Booking
 from apps.buyers.models import Buyer, BuyerOtp
 from apps.dealers.models import Dealer, DealerLocation
-from apps.leads.models import Lead
+from apps.leads.models import Lead, LeadNote
 from apps.vehicles.models import Vehicle
 
 
@@ -73,6 +74,17 @@ class LeadAutomationTests(TestCase):
         )
         return verify.json()["data"]["token"]
 
+    def available_booking_time(self):
+        scheduled_at = timezone.now() + timedelta(days=1)
+        while scheduled_at.weekday() > 4:
+            scheduled_at += timedelta(days=1)
+        return scheduled_at.astimezone(ZoneInfo("Africa/Lagos")).replace(
+            hour=10,
+            minute=30,
+            second=0,
+            microsecond=0,
+        )
+
     @patch("apps.notifications.services.notify_new_lead")
     def test_vehicle_view_creates_new_lead(self, notify_new_lead):
         token = self.buyer_token()
@@ -130,7 +142,7 @@ class LeadAutomationTests(TestCase):
             "/v1/bookings",
             {
                 "vehicleId": str(self.vehicle.id),
-                "scheduledAt": (timezone.now() + timedelta(days=2)).isoformat(),
+                "scheduledAt": self.available_booking_time().isoformat(),
             },
             format="json",
         )
@@ -150,7 +162,7 @@ class LeadAutomationTests(TestCase):
             "/v1/bookings",
             {
                 "vehicleId": str(self.vehicle.id),
-                "scheduledAt": (timezone.now() + timedelta(days=2)).isoformat(),
+                "scheduledAt": self.available_booking_time().isoformat(),
             },
             format="json",
         )
@@ -160,3 +172,35 @@ class LeadAutomationTests(TestCase):
         self.assertEqual(lead.stage, Lead.Stage.INSPECTION)
         self.assertEqual(lead.source, Lead.Source.BOOKING)
         notify_new_lead.assert_called_once()
+
+    def test_dealer_can_update_follow_up_and_add_lead_notes(self):
+        self.client.force_authenticate(self.staff)
+        lead = Lead.objects.create(
+            dealer=self.dealer,
+            location=self.location,
+            vehicle=self.vehicle,
+            name="Walk-in Buyer",
+            phone="+2348091111111",
+            source=Lead.Source.WALK_IN,
+        )
+        follow_up_at = (timezone.now() + timedelta(days=1)).replace(microsecond=0)
+
+        update_response = self.client.patch(
+            f"/v1/leads/{lead.id}",
+            {"followUpAt": follow_up_at.isoformat()},
+            format="json",
+        )
+        self.assertEqual(update_response.status_code, 200)
+        self.assertEqual(update_response.json()["data"]["followUpAt"], follow_up_at.isoformat().replace("+00:00", "Z"))
+
+        note_response = self.client.post(
+            f"/v1/leads/{lead.id}/notes",
+            {"body": "Buyer wants a follow-up tomorrow."},
+            format="json",
+        )
+        self.assertEqual(note_response.status_code, 201)
+        self.assertEqual(LeadNote.objects.get(lead=lead).author, self.staff)
+
+        list_response = self.client.get(f"/v1/leads/{lead.id}/notes")
+        self.assertEqual(list_response.status_code, 200)
+        self.assertEqual(list_response.json()["data"][0]["body"], "Buyer wants a follow-up tomorrow.")

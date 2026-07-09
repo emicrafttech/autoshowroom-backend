@@ -3,7 +3,18 @@ from rest_framework import serializers
 from apps.dealers.models import Dealer, DealerLocation
 from apps.vehicles.models import Vehicle
 
-from .models import AnalyticsEvent, GenericUploadRequest, Lead, NotifyMeRequest
+from .models import AnalyticsEvent, GenericUploadRequest, Lead, LeadNote, NotifyMeRequest
+
+
+class LeadNoteSerializer(serializers.ModelSerializer):
+    authorName = serializers.CharField(source="author.name", read_only=True)
+    sharedWithTeam = serializers.BooleanField(source="shared_with_team", required=False)
+    createdAt = serializers.DateTimeField(source="created_at", read_only=True)
+
+    class Meta:
+        model = LeadNote
+        fields = ["id", "lead", "authorName", "body", "sharedWithTeam", "createdAt"]
+        read_only_fields = ["id", "lead", "authorName", "createdAt"]
 
 
 class LeadSerializer(serializers.ModelSerializer):
@@ -12,6 +23,8 @@ class LeadSerializer(serializers.ModelSerializer):
     locationId = serializers.UUIDField(source="location_id", required=False, allow_null=True)
     vehicleId = serializers.UUIDField(source="vehicle_id", required=False, allow_null=True)
     vehicleTitle = serializers.SerializerMethodField()
+    followUpAt = serializers.DateTimeField(source="follow_up_at", required=False, allow_null=True)
+    notes = LeadNoteSerializer(many=True, read_only=True)
     createdAt = serializers.DateTimeField(source="created_at", read_only=True)
 
     class Meta:
@@ -29,6 +42,8 @@ class LeadSerializer(serializers.ModelSerializer):
             "message",
             "source",
             "stage",
+            "followUpAt",
+            "notes",
             "createdAt",
         ]
         read_only_fields = ["id", "createdAt"]

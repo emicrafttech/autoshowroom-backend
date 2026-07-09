@@ -14,6 +14,7 @@ from .tasks import (
     send_dealer_verification_success_email,
     send_dealer_verification_update_email,
     send_email_verification_reminder_email,
+    send_dealer_password_reset_email,
     send_listing_approved_email,
     send_listing_review_issue_email,
     send_new_chat_message_email,
@@ -189,6 +190,10 @@ def notify_platform_dealer_message(dealer, subject: str, message: str) -> None:
 
 def notify_staff_invite(user, token: str, *, portal: str = "dealer") -> None:
     send_staff_invite_email.delay(str(user.id), token, portal)
+
+
+def notify_dealer_password_reset(user, token: str) -> None:
+    send_dealer_password_reset_email.delay(str(user.id), token)
 
 
 def notify_payment_received(invoice, reference: str = "") -> None:

@@ -4,6 +4,7 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from django.utils.dateparse import parse_datetime
+from django.utils import timezone
 
 from apps.common.permissions import IsActiveDealerStaff
 from apps.common.views import EnvelopeMixin
@@ -116,6 +117,24 @@ class AppointmentViewSet(EnvelopeMixin, viewsets.ModelViewSet):
                 from apps.notifications.services import notify_booking_confirmed
 
                 notify_booking_confirmed(appointment.booking)
+        return Response(AppointmentSerializer(appointment, context={"request": request}).data)
+
+    def _mark_attendance(self, appointment, attendance_status):
+        if not appointment.booking_id:
+            return appointment
+        appointment.booking.attendance_status = attendance_status
+        appointment.booking.attended_at = timezone.now()
+        appointment.booking.save(update_fields=["attendance_status", "attended_at", "updated_at"])
+        return appointment
+
+    @action(detail=True, methods=["patch"], url_path="mark-show")
+    def mark_show(self, request, pk=None):
+        appointment = self._mark_attendance(self.get_object(), Booking.AttendanceStatus.SHOW)
+        return Response(AppointmentSerializer(appointment, context={"request": request}).data)
+
+    @action(detail=True, methods=["patch"], url_path="mark-no-show")
+    def mark_no_show(self, request, pk=None):
+        appointment = self._mark_attendance(self.get_object(), Booking.AttendanceStatus.NO_SHOW)
         return Response(AppointmentSerializer(appointment, context={"request": request}).data)
 
     @action(detail=True, methods=["patch"], url_path="reschedule")

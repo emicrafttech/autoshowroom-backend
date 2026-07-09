@@ -150,7 +150,7 @@ class DealerSignupSetupSerializer(serializers.Serializer):
     dealerName = serializers.CharField(max_length=160)
     email = serializers.EmailField()
     standName = serializers.CharField(max_length=80)
-    districtSlug = serializers.SlugField()
+    districtSlug = serializers.CharField(max_length=120)
     address = serializers.CharField()
 
     def validate_email(self, value):
@@ -160,15 +160,25 @@ class DealerSignupSetupSerializer(serializers.Serializer):
             raise serializers.ValidationError("An account already exists for this email.")
         return email
 
+    def validate_districtSlug(self, value):
+        district = value.strip()
+        if not district:
+            raise serializers.ValidationError("District is required.")
+        district_slug = slugify(district)
+        if not district_slug:
+            raise serializers.ValidationError("Enter a valid district.")
+        return district
+
     @transaction.atomic
     def save(self, **kwargs):
         user = self.context["user"]
         dealer = user.dealer
         dealer_name = self.validated_data["dealerName"]
-        district_slug = self.validated_data["districtSlug"]
+        district_label = self.validated_data["districtSlug"]
+        district_slug = slugify(district_label)
         dealer.name = dealer_name
         dealer.legal_name = dealer_name
-        dealer.area = district_slug
+        dealer.area = district_label
         dealer.district_slug = district_slug
         dealer.address = self.validated_data["address"]
         dealer.save(update_fields=["name", "legal_name", "area", "district_slug", "address", "updated_at"])
@@ -176,7 +186,7 @@ class DealerSignupSetupSerializer(serializers.Serializer):
         location = user.preferred_location or dealer.locations.filter(is_primary=True).first()
         if location:
             location.name = self.validated_data["standName"]
-            location.area = district_slug
+            location.area = district_label
             location.district_slug = district_slug
             location.address = self.validated_data["address"]
             location.save(update_fields=["name", "area", "district_slug", "address", "updated_at"])
@@ -184,7 +194,7 @@ class DealerSignupSetupSerializer(serializers.Serializer):
             location = DealerLocation.objects.create(
                 dealer=dealer,
                 name=self.validated_data["standName"],
-                area=district_slug,
+                area=district_label,
                 district_slug=district_slug,
                 address=self.validated_data["address"],
                 is_primary=True,
@@ -232,6 +242,42 @@ class DealerSignupPasswordSerializer(serializers.Serializer):
 
 class RefreshSerializer(serializers.Serializer):
     refreshToken = serializers.CharField(min_length=1)
+
+
+class PasswordResetRequestSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+
+    def validate_email(self, value):
+        return value.lower()
+
+
+class PasswordResetConfirmSerializer(serializers.Serializer):
+    token = serializers.CharField(min_length=16)
+    password = serializers.CharField(min_length=8, max_length=128, write_only=True)
+    confirmPassword = serializers.CharField(min_length=8, max_length=128, write_only=True)
+
+    def validate_token(self, value):
+        token_hash = hash_invite_token(value)
+        user = (
+            StaffUser.objects.select_related("dealer")
+            .filter(
+                password_reset_token_hash=token_hash,
+                password_reset_expires_at__gt=timezone.now(),
+                dealer__isnull=False,
+                is_active=True,
+            )
+            .first()
+        )
+        if not user:
+            raise serializers.ValidationError("Password reset link is invalid or expired.")
+        self.context["reset_user"] = user
+        return value
+
+    def validate(self, attrs):
+        if attrs["password"] != attrs["confirmPassword"]:
+            raise serializers.ValidationError({"confirmPassword": "Passwords do not match."})
+        password_validation.validate_password(attrs["password"], self.context.get("reset_user"))
+        return attrs
 
 
 class EmailVerificationSendSerializer(serializers.Serializer):

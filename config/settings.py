@@ -235,11 +235,15 @@ SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(
         minutes=int(os.getenv("JWT_ACCESS_TOKEN_MINUTES", "60"))
     ),
+    # Desktop/web dealer sessions. Mobile uses JWT_MOBILE_REFRESH_TOKEN_DAYS.
     "REFRESH_TOKEN_LIFETIME": timedelta(
         days=int(os.getenv("JWT_REFRESH_TOKEN_DAYS", "7"))
     ),
     "AUTH_HEADER_TYPES": ("Bearer",),
 }
+
+# Native mobile dealer apps send X-Client-Platform: mobile and get a longer refresh.
+JWT_MOBILE_REFRESH_TOKEN_DAYS = int(os.getenv("JWT_MOBILE_REFRESH_TOKEN_DAYS", "365"))
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/2")
 CHANNEL_LAYERS = {
@@ -300,7 +304,12 @@ PAYSTACK_PUBLIC_KEY = os.getenv("PAYSTACK_PUBLIC_KEY", "")
 PAYMENT_CURRENCY = os.getenv("PAYMENT_CURRENCY", "NGN")
 PAYMENT_METHOD_VERIFICATION_NGN = int(os.getenv("PAYMENT_METHOD_VERIFICATION_NGN", "100"))
 
+# Buyer JWT lifetime for desktop/web (seconds). Default: 7 days.
 BUYER_TOKEN_TTL_SECONDS = int(os.getenv("BUYER_TOKEN_TTL_SECONDS", "604800"))
+# Buyer JWT lifetime for native mobile apps (X-Client-Platform: mobile). Default: 365 days.
+BUYER_MOBILE_TOKEN_TTL_SECONDS = int(
+    os.getenv("BUYER_MOBILE_TOKEN_TTL_SECONDS", "31536000")
+)
 OTP_CODE_TTL_MINUTES = int(os.getenv("OTP_CODE_TTL_MINUTES", "10"))
 FIREBASE_SERVICE_ACCOUNT_JSON = os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON", "")
 FIREBASE_SERVICE_ACCOUNT_PATH = os.getenv("FIREBASE_SERVICE_ACCOUNT_PATH", "")

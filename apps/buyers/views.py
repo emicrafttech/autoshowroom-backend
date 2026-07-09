@@ -10,6 +10,7 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.common.client_platform import buyer_token_ttl_seconds, is_mobile_client
 from apps.common.views import EnvelopeMixin
 from apps.vehicles.storage import create_presigned_upload
 
@@ -52,7 +53,10 @@ class BuyerSignInVerifyView(EnvelopeMixin, APIView):
     authentication_classes = []
 
     def post(self, request):
-        serializer = BuyerSignInVerifySerializer(data=request.data)
+        serializer = BuyerSignInVerifySerializer(
+            data=request.data,
+            context={"request": request},
+        )
         serializer.is_valid(raise_exception=True)
         result = serializer.save()
         return Response(
@@ -72,7 +76,12 @@ class BuyerSessionRefreshView(EnvelopeMixin, APIView):
         return Response(
             {
                 "buyer": BuyerProfileSerializer(buyer).data,
-                "token": create_buyer_token(buyer),
+                "token": create_buyer_token(
+                    buyer,
+                    ttl_seconds=buyer_token_ttl_seconds(
+                        mobile=is_mobile_client(request)
+                    ),
+                ),
             }
         )
 

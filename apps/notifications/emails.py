@@ -112,6 +112,10 @@ def build_dealer_verification_url(token: str) -> str:
     return f"{dealer_app_url()}/verify-email?token={token}"
 
 
+def build_dealer_password_reset_url(token: str) -> str:
+    return f"{dealer_app_url()}/reset-password?token={token}"
+
+
 def dealer_staff_emails(dealer: Dealer) -> list[str]:
     return list(
         StaffUser.objects.filter(

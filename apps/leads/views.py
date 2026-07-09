@@ -3,6 +3,7 @@ from uuid import uuid4
 
 from django.conf import settings
 from rest_framework import generics, status, viewsets
+from rest_framework.decorators import action
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -13,10 +14,11 @@ from apps.platform.models import ContentReport
 from apps.platform.serializers import ContentReportSerializer
 from apps.vehicles.storage import create_presigned_upload
 
-from .models import AnalyticsEvent, GenericUploadRequest, Lead, NotifyMeRequest
+from .models import AnalyticsEvent, GenericUploadRequest, Lead, LeadNote, NotifyMeRequest
 from .serializers import (
     AnalyticsEventSerializer,
     GenericUploadRequestSerializer,
+    LeadNoteSerializer,
     LeadSerializer,
     NotifyMeRequestSerializer,
 )
@@ -48,6 +50,18 @@ class LeadViewSet(EnvelopeMixin, viewsets.ModelViewSet):
         from apps.notifications.services import notify_new_lead
 
         notify_new_lead(lead)
+
+    @action(detail=True, methods=["get", "post"], url_path="notes")
+    def notes(self, request, pk=None):
+        lead = self.get_object()
+        if request.method.lower() == "get":
+            notes = LeadNote.objects.filter(lead=lead).select_related("author")
+            return Response(LeadNoteSerializer(notes, many=True).data)
+
+        serializer = LeadNoteSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        note = serializer.save(lead=lead, author=request.user, shared_with_team=True)
+        return Response(LeadNoteSerializer(note).data, status=status.HTTP_201_CREATED)
 
 
 class NotifyMeCreateView(EnvelopeMixin, generics.CreateAPIView):

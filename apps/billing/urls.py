@@ -16,6 +16,7 @@ from .views import (
     PlatformBillingConfigView,
     PlatformBillingDisputeViewSet,
     PlatformBillingPlanViewSet,
+    PlatformEarlyPlanTerminationViewSet,
     PlatformSubscriptionViewSet,
 )
 
@@ -23,6 +24,7 @@ router = SimpleRouter(trailing_slash=False)
 router.register("platform/billing/plans", PlatformBillingPlanViewSet, basename="platform-billing-plan")
 router.register("platform/billing/subscriptions", PlatformSubscriptionViewSet, basename="platform-billing-subscription")
 router.register("platform/billing/disputes", PlatformBillingDisputeViewSet, basename="platform-billing-dispute")
+router.register("platform/billing/terminations", PlatformEarlyPlanTerminationViewSet, basename="platform-billing-termination")
 
 urlpatterns = [
     path("", include(router.urls)),

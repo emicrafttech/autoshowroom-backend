@@ -119,6 +119,34 @@ class UnifiedVehicleCatalogTests(TestCase):
         self.assertEqual(makes_data["source"], "local")
         self.assertTrue(any(item["name"] == "Toyota" for item in makes_data["makes"]))
 
+    def test_dealer_can_create_vehicle_with_listing_trust_fields(self):
+        self.authenticate()
+
+        response = self.client.post(
+            "/v1/vehicles",
+            self.vehicle_payload(
+                chassisNumber="CHS123",
+                yearOfManufacture=2020,
+                engineCapacityCc=2500,
+                registrationPlate="ABC123DE",
+                registrationState="FCT",
+                registrationLga="Abuja Municipal",
+                customsDutyStatus="cleared",
+                customsReference="SGD123",
+                bodyHistory="first_body",
+                papersStatus="complete",
+                dutyPaidClaim="dealer_claimed",
+                listingTrust="Full service history and customs duty available.",
+            ),
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 201)
+        vehicle = Vehicle.objects.get(id=response.json()["data"]["id"])
+        self.assertEqual(vehicle.listing_trust, "Full service history and customs duty available.")
+        self.assertEqual(vehicle.chassis_number, "CHS123")
+        self.assertEqual(vehicle.customs_duty_status, Vehicle.CustomsDutyStatus.CLEARED)
+
         models_response = self.client.get(
             "/v1/catalog/models",
             {"make": "toyota", "year": "2020"},

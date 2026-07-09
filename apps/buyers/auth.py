@@ -9,13 +9,16 @@ from rest_framework.exceptions import AuthenticationFailed, NotAuthenticated
 from .models import Buyer
 
 
-def create_buyer_token(buyer: Buyer) -> str:
+def create_buyer_token(buyer: Buyer, *, ttl_seconds: int | None = None) -> str:
+    lifetime = (
+        settings.BUYER_TOKEN_TTL_SECONDS if ttl_seconds is None else int(ttl_seconds)
+    )
     now = timezone.now()
     payload = {
         "sub": str(buyer.id),
         "typ": "buyer",
         "iat": int(now.timestamp()),
-        "exp": int((now + timedelta(seconds=settings.BUYER_TOKEN_TTL_SECONDS)).timestamp()),
+        "exp": int((now + timedelta(seconds=lifetime)).timestamp()),
     }
     return jwt.encode(payload, settings.SECRET_KEY, algorithm="HS256")
 

@@ -92,6 +92,7 @@ class RemainingRoadmapTests(TestCase):
         detail_response = self.client.get(f"/v1/feed/vehicles/{self.vehicle.id}")
         self.assertEqual(detail_response.status_code, 200)
         self.assertEqual(detail_response.json()["data"]["dealer"]["slug"], self.dealer.slug)
+        self.assertEqual(detail_response.json()["data"]["dealer"]["phone"], self.dealer.phone)
 
         dealer_response = self.client.get(f"/v1/feed/dealers/{self.dealer.slug}")
         self.assertEqual(dealer_response.status_code, 200)

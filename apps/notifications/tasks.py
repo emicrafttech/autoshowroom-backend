@@ -16,6 +16,7 @@ from apps.vehicles.models import Vehicle, VehicleReviewIssue
 
 from .emails import (
     booking_location_context,
+    build_dealer_password_reset_url,
     build_dealer_verification_url,
     build_staff_invite_url,
     dealer_app_url,
@@ -112,6 +113,24 @@ def send_email_verification_reminder_email(user_id: str) -> int:
         },
         recipient_list=[user.email],
         plain_text=f"Verify your email within {days_remaining} day(s). Grace period: {grace_days} days.",
+    )
+
+
+@shared_task
+def send_dealer_password_reset_email(user_id: str, token: str) -> int:
+    user = StaffUser.objects.select_related("dealer").get(id=user_id)
+    reset_url = build_dealer_password_reset_url(token)
+    return send_templated_email(
+        subject="Reset your AutoShowroom dealer password",
+        template_name="emails/dealer_password_reset.html",
+        context={
+            "recipient_name": user.name or "there",
+            "dealer_name": user.dealer.name if user.dealer_id else "your dealership",
+            "reset_url": reset_url,
+            "expiry_hours": 1,
+        },
+        recipient_list=[user.email],
+        plain_text=f"Reset your password using this link: {reset_url}",
     )
 
 

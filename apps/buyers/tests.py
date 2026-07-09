@@ -416,6 +416,45 @@ class BuyerSignInTests(TestCase):
         self.assertEqual(data["buyer"]["phone"], "+2348090006666")
         self.assertEqual(data["buyer"]["name"], "Restored Buyer")
 
+    def test_mobile_session_refresh_issues_longer_token(self):
+        import jwt
+        from django.conf import settings
+        from django.utils import timezone
+
+        buyer = Buyer.objects.create(phone="+2348090007777", name="Mobile Buyer")
+        token = create_buyer_token(buyer)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
+
+        desktop = self.client.post("/v1/buyers/session/refresh", {}, format="json")
+        mobile = self.client.post(
+            "/v1/buyers/session/refresh",
+            {},
+            format="json",
+            HTTP_X_CLIENT_PLATFORM="mobile",
+        )
+        self.assertEqual(desktop.status_code, 200)
+        self.assertEqual(mobile.status_code, 200)
+
+        now_ts = int(timezone.now().timestamp())
+        desktop_payload = jwt.decode(
+            desktop.json()["data"]["token"],
+            settings.SECRET_KEY,
+            algorithms=["HS256"],
+        )
+        mobile_payload = jwt.decode(
+            mobile.json()["data"]["token"],
+            settings.SECRET_KEY,
+            algorithms=["HS256"],
+        )
+        desktop_ttl = desktop_payload["exp"] - now_ts
+        mobile_ttl = mobile_payload["exp"] - now_ts
+
+        self.assertAlmostEqual(desktop_ttl, settings.BUYER_TOKEN_TTL_SECONDS, delta=30)
+        self.assertAlmostEqual(
+            mobile_ttl, settings.BUYER_MOBILE_TOKEN_TTL_SECONDS, delta=30
+        )
+        self.assertGreater(mobile_ttl, desktop_ttl)
+
 
 class BuyerProfileTests(TestCase):
     def setUp(self):

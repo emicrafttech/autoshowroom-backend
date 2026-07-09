@@ -174,6 +174,12 @@ class VehicleSerializer(serializers.ModelSerializer):
         source="listing_rejected_reason",
         read_only=True,
     )
+    listingTrust = serializers.CharField(
+        source="listing_trust",
+        required=False,
+        allow_null=True,
+        allow_blank=True,
+    )
     reviewIssues = serializers.SerializerMethodField()
     openReviewIssueCount = serializers.SerializerMethodField()
     feedReady = serializers.BooleanField(source="feed_ready", read_only=True)
@@ -226,6 +232,7 @@ class VehicleSerializer(serializers.ModelSerializer):
             "dealerAttestationAt",
             "listingApprovedAt",
             "listingRejectedReason",
+            "listingTrust",
             "reviewIssues",
             "openReviewIssueCount",
             "feedReady",

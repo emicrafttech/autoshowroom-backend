@@ -1,3 +1,4 @@
+from django.utils.text import slugify
 from rest_framework import serializers
 
 from apps.accounts.models import StaffUser
@@ -11,10 +12,12 @@ class DealerLocationSerializer(serializers.ModelSerializer):
     dealerName = serializers.CharField(source="dealer.name", read_only=True)
     dealer = serializers.SerializerMethodField()
     citySlug = serializers.SlugField(source="city_slug", required=False, default="abuja")
-    districtSlug = serializers.SlugField(
+    districtSlug = serializers.CharField(
         source="district_slug",
         required=False,
         allow_null=True,
+        allow_blank=True,
+        max_length=120,
     )
     isPrimary = serializers.BooleanField(source="is_primary", read_only=True)
     premisesVerificationStatus = serializers.CharField(
@@ -41,6 +44,10 @@ class DealerLocationSerializer(serializers.ModelSerializer):
     premisesEvidence = serializers.SerializerMethodField()
     geoChangedAt = serializers.DateTimeField(source="geo_changed_at", read_only=True)
     pendingGeo = serializers.JSONField(source="pending_geo", read_only=True)
+    pendingChanges = serializers.JSONField(source="pending_changes", read_only=True)
+    pendingChangesSubmittedAt = serializers.DateTimeField(source="pending_changes_submitted_at", read_only=True)
+    pendingChangesReviewedAt = serializers.DateTimeField(source="pending_changes_reviewed_at", read_only=True)
+    pendingChangesRejectionReason = serializers.CharField(source="pending_changes_rejection_reason", read_only=True)
     premisesRejectionCount = serializers.IntegerField(
         source="premises_rejection_count",
         read_only=True,
@@ -71,6 +78,10 @@ class DealerLocationSerializer(serializers.ModelSerializer):
             "premisesEvidence",
             "geoChangedAt",
             "pendingGeo",
+            "pendingChanges",
+            "pendingChangesSubmittedAt",
+            "pendingChangesReviewedAt",
+            "pendingChangesRejectionReason",
             "premisesRejectionCount",
             "createdAt",
             "updatedAt",
@@ -84,8 +95,15 @@ class DealerLocationSerializer(serializers.ModelSerializer):
 
     def validate(self, attrs):
         attrs = super().validate(attrs)
-        if not attrs.get("area") and attrs.get("district_slug"):
-            attrs["area"] = attrs["district_slug"]
+        district = attrs.get("district_slug")
+        if district:
+            district_label = district.strip()
+            district_slug = slugify(district_label)
+            if not district_slug:
+                raise serializers.ValidationError({"districtSlug": "Enter a valid district."})
+            attrs["district_slug"] = district_slug
+            if not attrs.get("area"):
+                attrs["area"] = district_label
         return attrs
 
     def get_dealer(self, obj):
@@ -207,7 +225,7 @@ class DealerContextLocationSerializer(serializers.ModelSerializer):
         fields = ["id", "name", "area", "isPrimary", "listingCount"]
 
     def get_listingCount(self, obj) -> int:
-        return 0
+        return obj.vehicles.count()
 
 
 class DealerStaffSerializer(serializers.ModelSerializer):

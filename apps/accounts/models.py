@@ -70,6 +70,8 @@ class StaffUser(AbstractBaseUser, PermissionsMixin):
     must_change_password = models.BooleanField(default=False)
     invite_token_hash = models.CharField(max_length=64, null=True, blank=True)
     invite_expires_at = models.DateTimeField(null=True, blank=True)
+    password_reset_token_hash = models.CharField(max_length=64, null=True, blank=True)
+    password_reset_expires_at = models.DateTimeField(null=True, blank=True)
     password_changed_at = models.DateTimeField(null=True, blank=True)
     email_verified_at = models.DateTimeField(null=True, blank=True)
     email_verification_token_hash = models.CharField(max_length=64, null=True, blank=True)

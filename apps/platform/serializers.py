@@ -7,6 +7,8 @@ from .models import (
     ContentReport,
     ContentReportNote,
     DataSubjectRequest,
+    DealerMessage,
+    DealerMessageThread,
     DealerSanction,
     PlatformRole,
     PlatformSetting,
@@ -74,6 +76,38 @@ class AuditLogSerializer(serializers.ModelSerializer):
     class Meta:
         model = AuditLog
         fields = ["id", "actorId", "actorName", "actorEmail", "action", "targetType", "targetId", "metadata", "createdAt"]
+
+
+class DealerMessageSerializer(serializers.ModelSerializer):
+    senderName = serializers.CharField(source="sender.name", read_only=True)
+    senderType = serializers.CharField(source="sender_type", read_only=True)
+    createdAt = serializers.DateTimeField(source="created_at", read_only=True)
+
+    class Meta:
+        model = DealerMessage
+        fields = ["id", "senderName", "senderType", "body", "createdAt"]
+
+
+class DealerMessageThreadSerializer(serializers.ModelSerializer):
+    dealerName = serializers.CharField(source="dealer.name", read_only=True)
+    createdByName = serializers.CharField(source="created_by.name", read_only=True)
+    messages = DealerMessageSerializer(many=True, read_only=True)
+    createdAt = serializers.DateTimeField(source="created_at", read_only=True)
+    updatedAt = serializers.DateTimeField(source="updated_at", read_only=True)
+
+    class Meta:
+        model = DealerMessageThread
+        fields = [
+            "id",
+            "dealer",
+            "dealerName",
+            "subject",
+            "status",
+            "createdByName",
+            "messages",
+            "createdAt",
+            "updatedAt",
+        ]
 
 
 class ContentReportSerializer(serializers.ModelSerializer):

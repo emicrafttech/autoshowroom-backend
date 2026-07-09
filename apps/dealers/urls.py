@@ -4,6 +4,8 @@ from rest_framework.routers import SimpleRouter
 from .views import (
     DealerBookingAvailabilityView,
     DealerContextView,
+    DealerInsightsView,
+    DealerMessageInboxView,
     DealerChatViewSet,
     DealerDeleteAccountView,
     DealerLocationViewSet,
@@ -36,6 +38,8 @@ urlpatterns = [
         name="dealer-booking-availability",
     ),
     path("me/context", DealerContextView.as_view(), name="dealer-context"),
+    path("me/insights", DealerInsightsView.as_view(), name="dealer-insights"),
+    path("me/messages", DealerMessageInboxView.as_view(), name="dealer-messages"),
     path("me/verification", DealerSelfVerificationView.as_view(), name="dealer-verification"),
     path("me/verification/submit", DealerSelfVerificationView.as_view(), name="dealer-verification-submit"),
     path("me/verification/resubmit", DealerSelfVerificationView.as_view(), name="dealer-verification-resubmit"),

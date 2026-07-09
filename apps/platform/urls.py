@@ -11,6 +11,7 @@ from .views import (
     PlatformDealerDocumentApproveView,
     PlatformDealerDocumentRejectView,
     PlatformDealerMessageView,
+    PlatformDealerMessageThreadView,
     PlatformDealerSuspendView,
     DealerProvisionView,
     DealerQueueView,
@@ -18,6 +19,9 @@ from .views import (
     DealerSanctionViewSet,
     PlatformLoginView,
     PlatformLocationRejectPremisesView,
+    PlatformLocationApproveChangesView,
+    PlatformLocationPendingChangesQueueView,
+    PlatformLocationRejectChangesView,
     PlatformLocationRequestInfoView,
     PlatformLocationStartReviewView,
     PlatformLocationVerifyPremisesView,
@@ -101,6 +105,7 @@ urlpatterns = [
     path("platform/dealers/verification-queue", DealerQueueView.as_view(), name="platform-dealer-verification-queue"),
     path("platform/dealers/verification-queue/stats", DealerVerificationStatsView.as_view(), name="platform-dealer-verification-stats"),
     path("platform/locations/premises-queue", DealerQueueView.as_view(queue_type="premises"), name="platform-premises-queue"),
+    path("platform/locations/pending-changes", PlatformLocationPendingChangesQueueView.as_view(), name="platform-location-pending-changes"),
     path(
         "platform/locations/premises-queue/stats",
         StatsView.as_view(
@@ -115,8 +120,11 @@ urlpatterns = [
     path("platform/locations/<uuid:location_id>/verify-premises", PlatformLocationVerifyPremisesView.as_view(), name="platform-location-verify"),
     path("platform/locations/<uuid:location_id>/reject-premises", PlatformLocationRejectPremisesView.as_view(), name="platform-location-reject"),
     path("platform/locations/<uuid:location_id>/request-info", PlatformLocationRequestInfoView.as_view(), name="platform-location-request-info"),
+    path("platform/locations/<uuid:location_id>/approve-changes", PlatformLocationApproveChangesView.as_view(), name="platform-location-approve-changes"),
+    path("platform/locations/<uuid:location_id>/reject-changes", PlatformLocationRejectChangesView.as_view(), name="platform-location-reject-changes"),
     path("platform/dealers/<uuid:dealer_id>", DealerDetailView.as_view(), name="platform-dealer-detail"),
     path("platform/dealers/<uuid:dealer_id>/message", PlatformDealerMessageView.as_view(), name="platform-dealer-message"),
+    path("platform/dealers/<uuid:dealer_id>/messages", PlatformDealerMessageThreadView.as_view(), name="platform-dealer-messages"),
     path("platform/dealers/<uuid:dealer_id>/suspend", PlatformDealerSuspendView.as_view(), name="platform-dealer-suspend"),
     path(
         "platform/dealer-documents/<uuid:document_id>/approve",

@@ -10,6 +10,11 @@ class Booking(models.Model):
         RESCHEDULED = "rescheduled", "Rescheduled"
         CANCELLED = "cancelled", "Cancelled"
 
+    class AttendanceStatus(models.TextChoices):
+        UNKNOWN = "unknown", "Unknown"
+        SHOW = "show", "Show"
+        NO_SHOW = "no_show", "No-show"
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     vehicle = models.ForeignKey("vehicles.Vehicle", on_delete=models.CASCADE, related_name="bookings")
     dealer = models.ForeignKey("dealers.Dealer", on_delete=models.CASCADE, related_name="bookings")
@@ -20,6 +25,12 @@ class Booking(models.Model):
     buyer_email = models.EmailField(null=True, blank=True)
     scheduled_at = models.DateTimeField()
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
+    attendance_status = models.CharField(
+        max_length=20,
+        choices=AttendanceStatus.choices,
+        default=AttendanceStatus.UNKNOWN,
+    )
+    attended_at = models.DateTimeField(null=True, blank=True)
     notes = models.TextField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
