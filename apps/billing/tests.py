@@ -14,9 +14,14 @@ from apps.dealers.models import Dealer, DealerLocation
 @override_settings(
     PAYSTACK_SECRET_KEY="sk_test_example",
     PAYSTACK_PUBLIC_KEY="pk_test_example",
+    CELERY_TASK_ALWAYS_EAGER=True,
+    CELERY_TASK_EAGER_PROPAGATES=False,
 )
 class PaystackCheckoutTests(TestCase):
     def setUp(self):
+        self.notify_patcher = patch("apps.notifications.services.notify_payment_received")
+        self.notify_patcher.start()
+        self.addCleanup(self.notify_patcher.stop)
         self.client = APIClient()
         self.dealer = Dealer.objects.create(
             slug="paystack-dealer",
@@ -24,7 +29,7 @@ class PaystackCheckoutTests(TestCase):
             legal_name="Paystack Dealer Ltd",
             area="Wuse",
             phone="+2348000000000",
-            plan_id="free",
+            plan_id="starter",
         )
         self.location = DealerLocation.objects.create(
             dealer=self.dealer,
@@ -46,26 +51,49 @@ class PaystackCheckoutTests(TestCase):
             is_staff=True,
             is_superuser=True,
         )
-        self.free_plan = BillingPlan.objects.create(
+        self.free_plan, _ = BillingPlan.objects.update_or_create(
             id="free",
-            name="Free",
-            price_ngn=0,
-            listing_limit=1,
+            defaults={
+                "name": "Free",
+                "price_ngn": 0,
+                "listing_limit": 1,
+                "is_active": True,
+            },
         )
-        self.paid_plan = BillingPlan.objects.create(
+        self.paid_plan, _ = BillingPlan.objects.update_or_create(
             id="growth",
-            name="Growth",
-            price_ngn=75000,
-            listing_limit=25,
-            stand_limit=3,
+            defaults={
+                "name": "Growth",
+                "price_ngn": 75000,
+                "price_yearly_ngn": 675000,
+                "listing_limit": 25,
+                "stand_limit": None,
+                "staff_limit": 5,
+                "is_active": True,
+            },
         )
-        self.starter_plan = BillingPlan.objects.create(
+        self.starter_plan, _ = BillingPlan.objects.update_or_create(
             id="starter",
-            name="Starter",
-            price_ngn=9999,
-            listing_limit=5,
-            stand_limit=1,
+            defaults={
+                "name": "Starter",
+                "price_ngn": 9999,
+                "price_yearly_ngn": 89991,
+                "listing_limit": 5,
+                "stand_limit": None,
+                "staff_limit": 1,
+                "is_active": True,
+            },
         )
+        # Prior paid invoice so founding-trial eligibility does not short-circuit checkout tests.
+        Invoice.objects.create(
+            dealer=self.dealer,
+            amount_ngn=9999,
+            amount_ex_vat_ngn=9302,
+            vat_ngn=697,
+            status=Invoice.Status.PAID,
+        )
+        self.dealer.plan_id = "free"
+        self.dealer.save(update_fields=["plan_id", "updated_at"])
         self.client.force_authenticate(self.staff)
 
     def test_platform_plan_count_includes_dealer_plan_id_without_subscription(self):
@@ -205,7 +233,9 @@ class PaystackCheckoutTests(TestCase):
         mock_verify.assert_called_once()
         self.dealer.refresh_from_db()
         self.assertEqual(self.dealer.plan_id, self.paid_plan.id)
-        self.assertEqual(Invoice.objects.filter(dealer=self.dealer, status=Invoice.Status.PAID).count(), 1)
+        paid_invoices = Invoice.objects.filter(dealer=self.dealer, status=Invoice.Status.PAID)
+        self.assertEqual(paid_invoices.count(), 2)
+        self.assertTrue(paid_invoices.filter(amount_ngn=self.paid_plan.price_ngn).exists())
         subscription = Subscription.objects.filter(
             dealer=self.dealer,
             status=Subscription.Status.ACTIVE,

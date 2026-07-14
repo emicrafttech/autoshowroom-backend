@@ -125,7 +125,11 @@ class DealerSignupVerifySerializer(serializers.Serializer):
             area=area,
             phone=validated_data["phone"],
             whatsapp=validated_data["phone"],
+            plan_id="starter",
         )
+        from apps.billing.subscriptions import enrol_starter_founding_trial
+
+        enrol_starter_founding_trial(dealer)
         location = DealerLocation.objects.create(
             dealer=dealer,
             name="Main Stand",

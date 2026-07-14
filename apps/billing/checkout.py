@@ -4,11 +4,13 @@ from rest_framework.exceptions import ValidationError
 
 from .models import BillingPlan, Invoice, PaymentEvent, Subscription
 from .paystack import PaystackError, verify_transaction
+from .plan_catalogue import vat_breakdown
 from .serializers import InvoiceSerializer, SubscriptionSerializer
 from .subscriptions import (
     apply_payment_method,
     copy_payment_method,
     default_period_end,
+    founding_trial_period_end,
     get_active_subscription,
     payment_method_from_authorization,
 )
@@ -79,6 +81,8 @@ def activate_subscription(
     preserve_period_end=None,
     payment_method: dict | None = None,
 ):
+    from .limits import soft_inactivate_excess_listings
+
     existing = _existing_checkout_result(reference)
     if existing:
         subscription, invoice = existing
@@ -87,15 +91,20 @@ def activate_subscription(
     init_event = _checkout_init_event(reference)
     init_payload = init_event.payload if init_event else {}
     charged_amount_ngn = amount_ngn if amount_ngn is not None else init_payload.get("amountNgn", plan.price_ngn)
+    billing_interval = init_payload.get("billingInterval") or Subscription.BillingInterval.MONTHLY
+    checkout_kind = init_payload.get("checkoutKind")
+    is_founding_trial = checkout_kind == "founding_trial"
 
     period_end = preserve_period_end
     if period_end is None and init_payload.get("preservePeriodEnd"):
         period_end = parse_datetime(init_payload["preservePeriodEnd"])
+    if period_end is None and is_founding_trial:
+        period_end = founding_trial_period_end()
     if period_end is None:
-        period_end = default_period_end()
+        period_end = default_period_end(billing_interval)
 
     active = get_active_subscription(dealer)
-    if active and init_payload.get("checkoutKind") == "upgrade_prorated" and active.current_period_end:
+    if active and checkout_kind == "upgrade_prorated" and active.current_period_end:
         period_end = active.current_period_end
 
     previous_active = active
@@ -116,7 +125,8 @@ def activate_subscription(
     subscription = Subscription.objects.create(
         dealer=dealer,
         plan=plan,
-        status=Subscription.Status.ACTIVE,
+        status=Subscription.Status.TRIALING if is_founding_trial else Subscription.Status.ACTIVE,
+        billing_interval=billing_interval,
         current_period_end=period_end,
     )
     if payment_method:
@@ -136,13 +146,16 @@ def activate_subscription(
         )
     dealer.plan_id = plan.id
     dealer.save(update_fields=["plan_id", "updated_at"])
+    soft_inactivate_excess_listings(dealer)
 
+    tax = vat_breakdown(charged_amount_ngn)
     invoice = Invoice.objects.create(
         dealer=dealer,
         subscription=subscription,
         amount_ngn=charged_amount_ngn,
+        amount_ex_vat_ngn=tax["amountExVatNgn"] if charged_amount_ngn else 0,
+        vat_ngn=tax["vatNgn"] if charged_amount_ngn else 0,
         status=Invoice.Status.PAID,
-        pdf_url=f"https://invoices.autoshowroom.local/{subscription.id}.pdf",
     )
     PaymentEvent.objects.create(
         event_type="checkout.completed",
@@ -153,12 +166,16 @@ def activate_subscription(
             "subscriptionId": str(subscription.id),
             "invoiceId": str(invoice.id),
             "amountNgn": charged_amount_ngn,
-            "checkoutKind": init_payload.get("checkoutKind"),
+            "billingInterval": billing_interval,
+            "checkoutKind": checkout_kind,
+            "vatNgn": invoice.vat_ngn,
+            "amountExVatNgn": invoice.amount_ex_vat_ngn,
         },
     )
     from apps.notifications.services import notify_payment_received
 
-    notify_payment_received(invoice, reference)
+    if charged_amount_ngn > 0:
+        notify_payment_received(invoice, reference)
     return subscription, invoice
 
 

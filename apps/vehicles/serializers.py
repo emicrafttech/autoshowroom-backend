@@ -184,6 +184,9 @@ class VehicleSerializer(serializers.ModelSerializer):
     openReviewIssueCount = serializers.SerializerMethodField()
     feedReady = serializers.BooleanField(source="feed_ready", read_only=True)
     refreshedAt = serializers.DateTimeField(source="refreshed_at", read_only=True)
+    isFeatured = serializers.SerializerMethodField()
+    featuredAt = serializers.DateTimeField(source="featured_at", read_only=True)
+    featuredUntil = serializers.DateTimeField(source="featured_until", read_only=True)
     createdAt = serializers.DateTimeField(source="created_at", read_only=True)
     updatedAt = serializers.DateTimeField(source="updated_at", read_only=True)
 
@@ -237,6 +240,9 @@ class VehicleSerializer(serializers.ModelSerializer):
             "openReviewIssueCount",
             "feedReady",
             "refreshedAt",
+            "isFeatured",
+            "featuredAt",
+            "featuredUntil",
             "createdAt",
             "updatedAt",
             "media",
@@ -253,6 +259,15 @@ class VehicleSerializer(serializers.ModelSerializer):
 
     def get_openReviewIssueCount(self, obj):
         return obj.review_issues.filter(status=VehicleReviewIssue.Status.OPEN).count()
+
+    def get_isFeatured(self, obj):
+        if not obj.is_featured:
+            return False
+        if obj.featured_until is None:
+            return True
+        from django.utils import timezone
+
+        return obj.featured_until > timezone.now()
 
     def validate(self, attrs):
         attrs = super().validate(attrs)

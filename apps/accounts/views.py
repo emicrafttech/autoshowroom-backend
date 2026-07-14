@@ -170,6 +170,7 @@ class DealerSignupPasswordView(EnvelopeMixin, APIView):
 
 class RefreshView(EnvelopeMixin, APIView):
     permission_classes = [AllowAny]
+    authentication_classes = []
 
     def post(self, request):
         serializer = RefreshSerializer(data=request.data)

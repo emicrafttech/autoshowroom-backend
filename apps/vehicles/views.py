@@ -5,6 +5,7 @@ from datetime import timedelta
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied, ValidationError
+from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
 
 from apps.common.permissions import (
@@ -12,9 +13,22 @@ from apps.common.permissions import (
     has_vehicle_review_permission,
 )
 from apps.common.views import EnvelopeMixin
-from apps.billing.limits import can_publish_listing, get_listing_limit
+from apps.billing.limits import (
+    can_publish_listing,
+    feature_vehicle,
+    get_listing_limit,
+    get_media_limits,
+    plan_allows_bulk_upload,
+    unfeature_vehicle,
+)
 from apps.platform.models import AuditLog
+from django.http import HttpResponse
 
+from .bulk_import import (
+    build_sample_csv_bytes,
+    build_sample_xlsx_bytes,
+    import_vehicles_from_upload,
+)
 from .models import Vehicle, VehicleMedia, VehicleReviewIssue
 from .serializers import (
     VehicleMediaCompleteSerializer,
@@ -77,7 +91,8 @@ class VehicleViewSet(EnvelopeMixin, viewsets.ModelViewSet):
         user = self.request.user
         if not getattr(user, "dealer_id", None):
             raise PermissionDenied("Dealer staff credentials are required.")
-        if Vehicle.objects.filter(dealer=user.dealer).count() >= get_listing_limit(user.dealer):
+        listing_limit = get_listing_limit(user.dealer)
+        if listing_limit is not None and Vehicle.objects.filter(dealer=user.dealer).count() >= listing_limit:
             raise PermissionDenied("Your current plan listing limit has been reached.")
         serializer.save(dealer=user.dealer)
 
@@ -173,6 +188,20 @@ class VehicleViewSet(EnvelopeMixin, viewsets.ModelViewSet):
 
         serializer = VehicleMediaUploadSessionSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        media_limits = get_media_limits(request.user.dealer)
+        existing_photos = vehicle.media_items.filter(kind=VehicleMedia.Kind.PHOTO).count()
+        existing_videos = vehicle.media_items.filter(kind=VehicleMedia.Kind.VIDEO).count()
+        incoming_photos = sum(1 for item in serializer.validated_data["items"] if item["kind"] == VehicleMedia.Kind.PHOTO)
+        incoming_videos = sum(1 for item in serializer.validated_data["items"] if item["kind"] == VehicleMedia.Kind.VIDEO)
+        if existing_photos + incoming_photos > media_limits["photosPerVehicle"]:
+            raise ValidationError(
+                f"Your plan allows up to {media_limits['photosPerVehicle']} photos per car."
+            )
+        if existing_videos + incoming_videos > media_limits["videosPerVehicle"]:
+            raise ValidationError(
+                f"Your plan allows up to {media_limits['videosPerVehicle']} videos per car."
+            )
+
         now = timezone.now()
         expires_at = now + timedelta(seconds=settings.MEDIA_UPLOAD_URL_EXPIRES_SECONDS)
         existing_count = vehicle.media_items.count()
@@ -198,10 +227,82 @@ class VehicleViewSet(EnvelopeMixin, viewsets.ModelViewSet):
                     "uploadUrl": upload.upload_url,
                     "publicUrl": upload.public_url,
                     "expiresAt": expires_at.isoformat(),
+                    "maxClipSeconds": media_limits["maxClipSeconds"],
                 }
             )
 
-        return Response({"items": items}, status=status.HTTP_201_CREATED)
+        return Response({"items": items, "mediaLimits": media_limits}, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=["post"], url_path="feature")
+    def feature(self, request, pk=None):
+        vehicle = self.get_object()
+        if vehicle.dealer_id != request.user.dealer_id:
+            raise PermissionDenied("Only the owning dealer can feature this listing.")
+        try:
+            feature_vehicle(request.user.dealer, vehicle)
+        except ValueError as exc:
+            raise ValidationError(str(exc)) from exc
+        return Response(VehicleSerializer(vehicle, context={"request": request}).data)
+
+    @action(detail=True, methods=["post"], url_path="unfeature")
+    def unfeature(self, request, pk=None):
+        vehicle = self.get_object()
+        if vehicle.dealer_id != request.user.dealer_id:
+            raise PermissionDenied("Only the owning dealer can unfeature this listing.")
+        unfeature_vehicle(vehicle)
+        return Response(VehicleSerializer(vehicle, context={"request": request}).data)
+
+    @action(detail=False, methods=["get"], url_path="bulk-upload/template")
+    def bulk_upload_template(self, request):
+        if not getattr(request.user, "dealer_id", None):
+            raise PermissionDenied("Dealer staff credentials are required.")
+        # Prefer `type` — DRF reserves the `format` query param for content negotiation.
+        fmt = (
+            request.query_params.get("type")
+            or request.query_params.get("format")
+            or "csv"
+        ).strip().lower()
+        if fmt in {"xlsx", "excel"}:
+            content = build_sample_xlsx_bytes()
+            return HttpResponse(
+                content,
+                content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                headers={
+                    "Content-Disposition": 'attachment; filename="autoshowroom-bulk-upload-sample.xlsx"',
+                },
+            )
+        content = build_sample_csv_bytes()
+        return HttpResponse(
+            content,
+            content_type="text/csv; charset=utf-8",
+            headers={
+                "Content-Disposition": 'attachment; filename="autoshowroom-bulk-upload-sample.csv"',
+            },
+        )
+
+    @action(
+        detail=False,
+        methods=["post"],
+        url_path="bulk-upload",
+        parser_classes=[MultiPartParser, FormParser],
+    )
+    def bulk_upload(self, request):
+        if not getattr(request.user, "dealer_id", None):
+            raise PermissionDenied("Dealer staff credentials are required.")
+        if not plan_allows_bulk_upload(request.user.dealer):
+            raise PermissionDenied("Bulk upload requires Growth or Prestige.")
+        uploaded = request.FILES.get("file") or request.FILES.get("upload")
+        if uploaded is None:
+            raise ValidationError("Upload a CSV or Excel file using the file field.")
+        result = import_vehicles_from_upload(
+            request=request,
+            dealer=request.user.dealer,
+            uploaded_file=uploaded,
+        )
+        status_code = (
+            status.HTTP_201_CREATED if result["count"] else status.HTTP_200_OK
+        )
+        return Response(result, status=status_code)
 
     @action(
         detail=True,

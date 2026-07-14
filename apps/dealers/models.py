@@ -64,7 +64,7 @@ class Dealer(models.Model):
     description = models.TextField(null=True, blank=True)
     hours = models.JSONField(default=dict, blank=True)
     booking_availability = models.JSONField(default=dict, blank=True)
-    plan_id = models.CharField(max_length=40, default="free")
+    plan_id = models.CharField(max_length=40, default="starter")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

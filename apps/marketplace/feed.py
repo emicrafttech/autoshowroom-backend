@@ -2,13 +2,9 @@ import random
 import zlib
 from datetime import datetime, timezone as dt_timezone
 
-from django.db.models import DateTimeField, IntegerField, OuterRef, Q, Subquery, Value
+from django.db.models import BooleanField, Case, DateTimeField, IntegerField, Q, Value, When
 from django.db.models.functions import Coalesce
 from django.utils import timezone
-
-from apps.billing.models import BillingPlan, Subscription
-from apps.dealers.models import Dealer
-from apps.vehicles.models import Vehicle
 
 _EPOCH = datetime(1970, 1, 1, tzinfo=dt_timezone.utc)
 
@@ -51,41 +47,49 @@ def apply_feed_filters(queryset, params):
 
 
 def annotate_feed_priority(queryset):
-    active_subscription_priority = (
-        Subscription.objects.filter(
-            dealer_id=OuterRef("dealer_id"),
-            status__in=[
-                Subscription.Status.TRIALING,
-                Subscription.Status.ACTIVE,
-            ],
-        )
-        .order_by("-created_at")
-        .values("plan__feed_priority")[:1]
-    )
-    dealer_plan_priority = BillingPlan.objects.filter(
-        id=OuterRef("dealer__plan_id"),
-        is_active=True,
-    ).values("feed_priority")[:1]
-
+    """Boost explicitly featured listings only (no silent plan-wide boost)."""
+    now = timezone.now()
     return queryset.annotate(
-        feed_priority=Coalesce(
-            Subquery(active_subscription_priority, output_field=IntegerField()),
-            Subquery(dealer_plan_priority, output_field=IntegerField()),
-            Value(0),
+        feed_is_featured=Case(
+            When(
+                is_featured=True,
+                featured_until__isnull=True,
+                then=Value(True),
+            ),
+            When(
+                is_featured=True,
+                featured_until__gt=now,
+                then=Value(True),
+            ),
+            default=Value(False),
+            output_field=BooleanField(),
+        ),
+        feed_priority=Case(
+            When(
+                is_featured=True,
+                featured_until__isnull=True,
+                then=Value(100),
+            ),
+            When(
+                is_featured=True,
+                featured_until__gt=now,
+                then=Value(100),
+            ),
+            default=Value(0),
             output_field=IntegerField(),
-        )
+        ),
     )
 
 
 def with_feed_publish_order(queryset):
-    """Order by admin approval time (listing_approved_at), newest first."""
+    """Order featured first, then by admin approval time (newest first)."""
     return queryset.annotate(
         feed_sort_published_at=Coalesce(
             "listing_approved_at",
             "published_at",
             Value(_EPOCH, output_field=DateTimeField()),
         )
-    ).order_by("-feed_sort_published_at", "-updated_at", "-id")
+    ).order_by("-feed_priority", "-feed_sort_published_at", "-updated_at", "-id")
 
 
 def feed_filter_seed_key(params) -> str:
@@ -120,17 +124,28 @@ def feed_shuffle_seed(params, page_number: int) -> int:
     return zlib.adler32(raw.encode())
 
 
+def _vehicle_is_featured(vehicle) -> bool:
+    if getattr(vehicle, "feed_is_featured", None) is not None:
+        return bool(vehicle.feed_is_featured)
+    if not getattr(vehicle, "is_featured", False):
+        return False
+    featured_until = getattr(vehicle, "featured_until", None)
+    return featured_until is None or featured_until > timezone.now()
+
+
 def rank_feed_page(vehicles, *, params, page_number: int):
     """
     Apply feed ranking for one paginated slice:
-    1. Input is already sorted by publish time (newest first).
-    2. Randomize order within the page (stable per feedSession/page/filters).
-    3. Re-order by dealer feed priority so subscribers appear first.
+    1. Input is already sorted with featured first.
+    2. Shuffle organic and featured groups separately (stable per session).
+    3. Keep featured group ahead of organic; featured stay labelled via isFeatured.
     """
     if not vehicles:
         return vehicles
 
-    shuffled = vehicles[:]
-    random.Random(feed_shuffle_seed(params, page_number)).shuffle(shuffled)
-    shuffled.sort(key=lambda vehicle: getattr(vehicle, "feed_priority", 0), reverse=True)
-    return shuffled
+    rng = random.Random(feed_shuffle_seed(params, page_number))
+    featured = [v for v in vehicles if _vehicle_is_featured(v)]
+    organic = [v for v in vehicles if not _vehicle_is_featured(v)]
+    rng.shuffle(featured)
+    rng.shuffle(organic)
+    return featured + organic

@@ -54,6 +54,7 @@ class PublicVehicleSerializer(serializers.ModelSerializer):
     publishedAt = serializers.DateTimeField(source="published_at", read_only=True)
     updatedAt = serializers.DateTimeField(source="updated_at", read_only=True)
     feedReady = serializers.BooleanField(source="feed_ready", read_only=True)
+    isFeatured = serializers.SerializerMethodField()
 
     class Meta:
         model = Vehicle
@@ -82,7 +83,19 @@ class PublicVehicleSerializer(serializers.ModelSerializer):
             "updatedAt",
             "feedReady",
             "status",
+            "isFeatured",
         ]
+
+    def get_isFeatured(self, obj):
+        if getattr(obj, "feed_is_featured", None) is not None:
+            return bool(obj.feed_is_featured)
+        if not obj.is_featured:
+            return False
+        if obj.featured_until is None:
+            return True
+        from django.utils import timezone
+
+        return obj.featured_until > timezone.now()
 
 
 class PublicDealerDetailSerializer(PublicDealerSummarySerializer):

@@ -51,6 +51,16 @@ class LeadViewSet(EnvelopeMixin, viewsets.ModelViewSet):
 
         notify_new_lead(lead)
 
+    def perform_update(self, serializer):
+        from apps.billing.limits import plan_allows_follow_up_reminders
+        from rest_framework.exceptions import PermissionDenied
+
+        if "follow_up_at" in serializer.validated_data and not plan_allows_follow_up_reminders(
+            self.request.user.dealer
+        ):
+            raise PermissionDenied("Follow-up reminders require Growth or Prestige.")
+        serializer.save()
+
     @action(detail=True, methods=["get", "post"], url_path="notes")
     def notes(self, request, pk=None):
         lead = self.get_object()

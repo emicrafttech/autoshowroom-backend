@@ -55,7 +55,9 @@ class AuthDealerFoundationTests(TestCase):
         user = user or self.user
         self.client.force_authenticate(user=user)
 
-    def test_login_and_refresh_return_tokens(self):
+    def test_refresh_accepts_valid_refresh_with_expired_access_header(self):
+        from rest_framework_simplejwt.tokens import RefreshToken
+
         login_response = self.client.post(
             "/v1/auth/login",
             {"email": "owner@example.com", "password": "strong-pass-123"},
@@ -69,10 +71,13 @@ class AuthDealerFoundationTests(TestCase):
         self.assertEqual(login_data["user"]["dealerId"], str(self.dealer.id))
         self.assertEqual(login_data["user"]["locationId"], str(self.primary_location.id))
 
+        expired_access = RefreshToken(login_data["refreshToken"]).access_token
+        expired_access.set_exp(lifetime=timedelta(seconds=-1))
         refresh_response = self.client.post(
             "/v1/auth/refresh",
             {"refreshToken": login_data["refreshToken"]},
             format="json",
+            HTTP_AUTHORIZATION=f"Bearer {expired_access}",
         )
 
         self.assertEqual(refresh_response.status_code, 200)
@@ -232,19 +237,27 @@ class AuthDealerFoundationTests(TestCase):
         self.assertEqual(created_user.role, StaffUser.Role.OWNER)
         self.assertEqual(created_user.dealer.name, "New Dealer")
         self.assertEqual(created_user.dealer.locations.count(), 1)
+        from apps.billing.models import Subscription
+
+        trial = Subscription.objects.get(dealer=created_user.dealer)
+        self.assertEqual(trial.status, Subscription.Status.TRIALING)
+        self.assertEqual(trial.plan_id, "starter")
+        self.assertEqual(created_user.dealer.plan_id, "starter")
+        self.assertIsNotNone(trial.current_period_end)
 
         self.client.force_authenticate(user=created_user)
-        setup_response = self.client.patch(
-            "/v1/auth/dealer-signup/setup",
-            {
-                "dealerName": "New Dealer Motors",
-                "email": "new-owner@example.com",
-                "standName": "Central Stand",
-                "districtSlug": "garki",
-                "address": "Plot 12, Garki, Abuja",
-            },
-            format="json",
-        )
+        with patch("apps.accounts.views.issue_dealer_email_verification", return_value="dev-token"):
+            setup_response = self.client.patch(
+                "/v1/auth/dealer-signup/setup",
+                {
+                    "dealerName": "New Dealer Motors",
+                    "email": "new-owner@example.com",
+                    "standName": "Central Stand",
+                    "districtSlug": "garki",
+                    "address": "Plot 12, Garki, Abuja",
+                },
+                format="json",
+            )
         self.assertEqual(setup_response.status_code, 200)
         created_user.refresh_from_db()
         self.assertEqual(created_user.email, "new-owner@example.com")
@@ -737,18 +750,16 @@ class AuthDealerFoundationTests(TestCase):
         self.assertEqual(self.dealer.operational_status, Dealer.OperationalStatus.ACTIVE)
         self.assertIsNone(self.dealer.suspended_reason)
 
-    def test_dealer_location_create_respects_stand_limit(self):
-        BillingPlan.objects.filter(id="free").update(stand_limit=2)
+    def test_dealer_location_create_is_not_plan_gated(self):
         self.authenticate()
 
         response = self.client.post(
             "/v1/dealers/me/locations",
-            {"name": "Limit Stand", "districtSlug": "maitama"},
+            {"name": "Extra Stand", "districtSlug": "maitama"},
             format="json",
         )
 
-        self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.json()["error"]["details"]["standLimit"], "2")
+        self.assertEqual(response.status_code, 201)
 
     def test_dealer_location_routes_are_tenant_scoped(self):
         other_dealer = Dealer.objects.create(

@@ -13,19 +13,19 @@ from apps.vehicles.models import Vehicle
 
 
 class FeedRankingUnitTests(SimpleTestCase):
-    def test_rank_feed_page_prioritizes_subscribers_after_shuffle(self):
+    def test_rank_feed_page_prioritizes_featured_after_shuffle(self):
         vehicles = [
-            SimpleNamespace(id="free-new", feed_priority=0),
-            SimpleNamespace(id="growth-old", feed_priority=10),
-            SimpleNamespace(id="free-old", feed_priority=0),
+            SimpleNamespace(id="organic-new", is_featured=False, feed_is_featured=False),
+            SimpleNamespace(id="featured-old", is_featured=True, feed_is_featured=True),
+            SimpleNamespace(id="organic-old", is_featured=False, feed_is_featured=False),
         ]
         params = Mock()
         params.get = lambda key, default=None: "unit-test" if key == "seed" else default
         params.items = lambda: [("seed", "unit-test")]
 
         ranked = rank_feed_page(vehicles, params=params, page_number=1)
-        self.assertEqual([item.id for item in ranked[:1]], ["growth-old"])
-        self.assertEqual({item.id for item in ranked[1:]}, {"free-new", "free-old"})
+        self.assertEqual([item.id for item in ranked[:1]], ["featured-old"])
+        self.assertEqual({item.id for item in ranked[1:]}, {"organic-new", "organic-old"})
 
     def test_feed_shuffle_seed_is_stable(self):
         params = Mock()
@@ -175,51 +175,54 @@ class FeedAlgorithmTests(TestCase):
         page_one = self.client.get("/v1/feed?pageSize=1&page=1&seed=feed-test")
         self.assertEqual(page_one.json()["data"]["results"][0]["id"], str(newer.id))
 
-    def test_subscriber_vehicles_rank_before_free_plan_on_same_page(self):
+    def test_featured_vehicles_rank_before_organic_on_same_page(self):
         now = timezone.now()
-        free_vehicle = self._create_vehicle(
+        organic = self._create_vehicle(
             self.free_dealer,
             self.free_location,
-            slug="free-listing",
+            slug="organic-listing",
             make="Toyota",
             listing_approved_at=now,
         )
-        growth_vehicle = self._create_vehicle(
+        featured = self._create_vehicle(
             self.growth_dealer,
             self.growth_location,
-            slug="growth-listing",
+            slug="featured-listing",
             make="Honda",
             listing_approved_at=now - timedelta(hours=2),
         )
+        featured.is_featured = True
+        featured.featured_at = now
+        featured.featured_until = now + timedelta(days=7)
+        featured.save(update_fields=["is_featured", "featured_at", "featured_until", "updated_at"])
 
         response = self.client.get("/v1/feed?pageSize=2&seed=feed-test")
         self.assertEqual(response.status_code, 200)
         results = response.json()["data"]["results"]
         self.assertEqual(len(results), 2)
-        self.assertEqual(results[0]["id"], str(growth_vehicle.id))
-        self.assertEqual(results[1]["id"], str(free_vehicle.id))
+        self.assertEqual(results[0]["id"], str(featured.id))
+        self.assertTrue(results[0]["isFeatured"])
+        self.assertEqual(results[1]["id"], str(organic.id))
+        self.assertFalse(results[1]["isFeatured"])
 
-    def test_active_subscription_overrides_dealer_plan_priority(self):
+    def test_featured_flag_is_exposed_without_plan_boost(self):
         now = timezone.now()
-        dealer = self._create_dealer("hybrid-motors", plan_id="free")
-        location = dealer.locations.get()
         vehicle = self._create_vehicle(
-            dealer,
-            location,
-            slug="hybrid-listing",
+            self.free_dealer,
+            self.free_location,
+            slug="labelled-listing",
             make="Mazda",
             listing_approved_at=now,
         )
-        growth_plan = BillingPlan.objects.get(id="growth")
-        Subscription.objects.create(
-            dealer=dealer,
-            plan=growth_plan,
-            status=Subscription.Status.ACTIVE,
-        )
+        vehicle.is_featured = True
+        vehicle.featured_at = now
+        vehicle.save(update_fields=["is_featured", "featured_at", "updated_at"])
 
         response = self.client.get("/v1/feed?seed=feed-test")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["data"]["results"][0]["id"], str(vehicle.id))
+        result = response.json()["data"]["results"][0]
+        self.assertEqual(result["id"], str(vehicle.id))
+        self.assertTrue(result["isFeatured"])
 
     def test_shuffle_is_stable_for_same_seed_and_page(self):
         now = timezone.now()

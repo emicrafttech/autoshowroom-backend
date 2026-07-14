@@ -10,7 +10,7 @@ from rest_framework.views import APIView
 
 from apps.accounts.models import StaffUser
 from apps.accounts.tokens import generate_invite_token, hash_invite_token, invite_expiry
-from apps.billing.limits import get_stand_limit
+from apps.billing.limits import can_invite_staff, get_analytics_tier
 from apps.buyers.chat_service import create_chat_attachment_upload_session, create_conversation_message
 from apps.buyers.models import BuyerConversation, BuyerMessage
 from apps.buyers.serializers import (
@@ -138,24 +138,40 @@ class DealerInsightsView(EnvelopeMixin, APIView):
         from apps.vehicles.models import Vehicle
 
         sold = Vehicle.objects.filter(dealer=dealer, status=Vehicle.Status.SOLD)
-        active_inventory = Vehicle.objects.filter(dealer=dealer).exclude(status=Vehicle.Status.SOLD)
-        return Response(
-            {
-                "soldValueNgn": sold.aggregate(total=Sum("price_ngn"))["total"] or 0,
-                "soldCount": sold.count(),
-                "leadSources": list(
-                    Lead.objects.filter(dealer=dealer)
-                    .values("source")
-                    .annotate(count=Count("id"))
-                    .order_by("source")
-                ),
-                "carsByMakeModel": list(
-                    active_inventory.values("make", "model")
-                    .annotate(count=Count("id"))
-                    .order_by("make", "model")
-                ),
-            }
-        )
+        sold_count = sold.count()
+        analytics_tier = get_analytics_tier(dealer)
+        payload = {
+            "analyticsTier": analytics_tier,
+            "soldCount": sold_count,
+            "leadCount": Lead.objects.filter(dealer=dealer).count(),
+        }
+        if analytics_tier == "full":
+            active_inventory = Vehicle.objects.filter(dealer=dealer).exclude(status=Vehicle.Status.SOLD)
+            payload.update(
+                {
+                    "soldValueNgn": sold.aggregate(total=Sum("price_ngn"))["total"] or 0,
+                    "leadSources": list(
+                        Lead.objects.filter(dealer=dealer)
+                        .values("source")
+                        .annotate(count=Count("id"))
+                        .order_by("source")
+                    ),
+                    "carsByMakeModel": list(
+                        active_inventory.values("make", "model")
+                        .annotate(count=Count("id"))
+                        .order_by("make", "model")
+                    ),
+                }
+            )
+        else:
+            payload.update(
+                {
+                    "soldValueNgn": sold.aggregate(total=Sum("price_ngn"))["total"] or 0,
+                    "leadSources": [],
+                    "carsByMakeModel": [],
+                }
+            )
+        return Response(payload)
 
 
 class DealerMessageInboxView(EnvelopeMixin, APIView):
@@ -200,14 +216,6 @@ class DealerLocationViewSet(EnvelopeMixin, viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         dealer = get_object_or_404(Dealer, id=self.request.user.dealer_id)
-        stand_limit = get_stand_limit(dealer)
-        if dealer.locations.count() >= stand_limit:
-            raise ValidationError(
-                {
-                    "detail": "Your current plan has reached its stand limit.",
-                    "standLimit": stand_limit,
-                }
-            )
         is_first_location = not dealer.locations.exists()
         evidence_files = serializer.validated_data.get("evidence_files", [])
         has_kyd_premises_proof = DealerVerificationDocument.objects.filter(
@@ -406,6 +414,13 @@ class DealerStaffViewSet(EnvelopeMixin, viewsets.ModelViewSet):
         serializer.save()
 
     def perform_create(self, serializer):
+        dealer = self.request.user.dealer
+        if not can_invite_staff(dealer):
+            raise ValidationError(
+                {
+                    "detail": "Your current plan has reached its staff seat limit.",
+                }
+            )
         user = serializer.save()
         token = getattr(user, "inviteToken", None)
         if token:

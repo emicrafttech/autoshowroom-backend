@@ -201,6 +201,9 @@ class Vehicle(models.Model):
     listing_trust = models.TextField(null=True, blank=True)
     feed_ready = models.BooleanField(default=False)
     refreshed_at = models.DateTimeField(null=True, blank=True)
+    is_featured = models.BooleanField(default=False)
+    featured_at = models.DateTimeField(null=True, blank=True)
+    featured_until = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
