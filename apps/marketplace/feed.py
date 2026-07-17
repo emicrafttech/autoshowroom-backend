@@ -14,7 +14,8 @@ def apply_feed_filters(queryset, params):
         "make": "make__iexact",
         "model": "model__iexact",
         "trim": "trim__iexact",
-        "bodyType": "body_type",
+        "bodyType": "body_type__iexact",
+        "fuel": "fuel__iexact",
         "dealerSlug": "dealer__slug",
         "area": "location__area__iexact",
     }
@@ -42,7 +43,11 @@ def apply_feed_filters(queryset, params):
             Q(make__icontains=search)
             | Q(model__icontains=search)
             | Q(trim__icontains=search)
+            | Q(body_type__icontains=search)
+            | Q(fuel__icontains=search)
+            | Q(colour__icontains=search)
             | Q(dealer__name__icontains=search)
+            | Q(location__area__icontains=search)
         )
     return queryset
 

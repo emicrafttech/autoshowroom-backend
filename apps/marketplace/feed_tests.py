@@ -8,7 +8,7 @@ from rest_framework.test import APIClient
 
 from apps.billing.models import BillingPlan, Subscription
 from apps.dealers.models import Dealer, DealerLocation
-from apps.marketplace.feed import feed_shuffle_seed, rank_feed_page
+from apps.marketplace.feed import apply_feed_filters, feed_shuffle_seed, rank_feed_page
 from apps.vehicles.models import Vehicle
 
 
@@ -266,3 +266,36 @@ class FeedAlgorithmTests(TestCase):
         ordered_ids = [item["id"] for item in response.json()["data"]["results"]]
         publish_order_ids = [str(vehicle.id) for vehicle in vehicles]
         self.assertNotEqual(ordered_ids, publish_order_ids)
+
+    def test_feed_filters_by_body_type_and_search_q(self):
+        now = timezone.now()
+        sedan = self._create_vehicle(
+            self.free_dealer,
+            self.free_location,
+            slug="sedan-car",
+            make="Toyota",
+            listing_approved_at=now,
+        )
+        suv = self._create_vehicle(
+            self.free_dealer,
+            self.free_location,
+            slug="suv-car",
+            make="BMW",
+            listing_approved_at=now - timedelta(hours=1),
+        )
+        suv.body_type = Vehicle.BodyType.SUV
+        suv.save(update_fields=["body_type", "updated_at"])
+
+        by_param = self.client.get("/v1/feed?bodyType=SUV&seed=body-filter")
+        self.assertEqual(by_param.status_code, 200)
+        param_ids = {item["id"] for item in by_param.json()["data"]["results"]}
+        self.assertEqual(param_ids, {str(suv.id)})
+
+        by_query = self.client.get("/v1/feed?q=SUV&seed=body-search")
+        self.assertEqual(by_query.status_code, 200)
+        query_ids = {item["id"] for item in by_query.json()["data"]["results"]}
+        self.assertEqual(query_ids, {str(suv.id)})
+        self.assertNotIn(str(sedan.id), query_ids)
+
+        queryset = apply_feed_filters(Vehicle.objects.all(), {"bodyType": "suv"})
+        self.assertEqual(list(queryset.values_list("id", flat=True)), [suv.id])
