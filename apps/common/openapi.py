@@ -148,7 +148,12 @@ from apps.platform.views import (
     StatsView,
     WatchlistEntryViewSet,
 )
-from apps.vehicles.catalog_views import CatalogMakesView, CatalogModelsView
+from apps.vehicles.catalog_views import (
+    CatalogMakesView,
+    CatalogModelsView,
+    CatalogTreeView,
+    CatalogTrimsView,
+)
 from apps.vehicles.views import VehicleViewSet
 from apps.vehicles.chat_views import (
     VehicleChatDetailView,
@@ -339,7 +344,7 @@ mfa_response = inline_serializer(
 catalog_makes_response = inline_serializer(
     name="CatalogMakesResponse",
     fields={
-        "makes": serializers.ListField(child=serializers.CharField()),
+        "makes": serializers.ListField(child=serializers.DictField()),
         "source": serializers.CharField(),
     },
 )
@@ -348,7 +353,25 @@ catalog_models_response = inline_serializer(
     fields={
         "make": serializers.CharField(),
         "year": serializers.IntegerField(allow_null=True),
-        "models": serializers.ListField(child=serializers.CharField()),
+        "models": serializers.ListField(child=serializers.DictField()),
+        "source": serializers.CharField(),
+    },
+)
+catalog_trims_response = inline_serializer(
+    name="CatalogTrimsResponse",
+    fields={
+        "make": serializers.CharField(),
+        "model": serializers.CharField(),
+        "trims": serializers.ListField(child=serializers.DictField()),
+        "source": serializers.CharField(),
+    },
+)
+catalog_tree_response = inline_serializer(
+    name="CatalogTreeResponse",
+    fields={
+        "version": serializers.IntegerField(),
+        "updatedAt": serializers.CharField(allow_null=True),
+        "makes": serializers.ListField(child=serializers.DictField()),
         "source": serializers.CharField(),
     },
 )
@@ -773,8 +796,14 @@ FeedVehicleDetailView.get = extend_schema(tags=["Marketplace"], summary="Retriev
 FeedDealerDetailView.get = extend_schema(tags=["Marketplace"], summary="Retrieve public dealer profile")(FeedDealerDetailView.get)
 FeedLocationsView.get = extend_schema(tags=["Marketplace"], summary="List public feed locations")(FeedLocationsView.get)
 FeedMetaView.get = extend_schema(tags=["Marketplace"], summary="Get public feed filter metadata", responses={200: feed_meta_response})(FeedMetaView.get)
+CatalogTreeView.get = extend_schema(
+    tags=["Marketplace"],
+    summary="Get full vehicle make/model/trim catalog",
+    responses={200: catalog_tree_response},
+)(CatalogTreeView.get)
 CatalogMakesView.get = extend_schema(tags=["Marketplace"], summary="List vehicle makes", responses={200: catalog_makes_response})(CatalogMakesView.get)
 CatalogModelsView.get = extend_schema(tags=["Marketplace"], summary="List models for a make", responses={200: catalog_models_response})(CatalogModelsView.get)
+CatalogTrimsView.get = extend_schema(tags=["Marketplace"], summary="List trims for a make and model", responses={200: catalog_trims_response})(CatalogTrimsView.get)
 
 extend_schema_view(
     list=extend_schema(tags=["Leads"], summary="List dealer leads"),

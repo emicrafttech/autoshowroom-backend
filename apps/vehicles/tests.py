@@ -116,8 +116,24 @@ class UnifiedVehicleCatalogTests(TestCase):
         makes_response = self.client.get("/v1/catalog/makes")
         self.assertEqual(makes_response.status_code, 200)
         makes_data = makes_response.json()["data"]
-        self.assertEqual(makes_data["source"], "local")
+        self.assertEqual(makes_data["source"], "json")
         self.assertTrue(any(item["name"] == "Toyota" for item in makes_data["makes"]))
+
+        trims_response = self.client.get(
+            "/v1/catalog/trims",
+            {"make": "toyota", "model": "camry"},
+        )
+        self.assertEqual(trims_response.status_code, 200)
+        trims_data = trims_response.json()["data"]
+        self.assertEqual(trims_data["make"], "Toyota")
+        self.assertEqual(trims_data["model"], "Camry")
+        self.assertTrue(any(item["name"] == "XLE" for item in trims_data["trims"]))
+
+        tree_response = self.client.get("/v1/catalog/")
+        self.assertEqual(tree_response.status_code, 200)
+        tree_data = tree_response.json()["data"]
+        self.assertEqual(tree_data["source"], "json")
+        self.assertTrue(any(item["name"] == "Toyota" for item in tree_data["makes"]))
 
     def test_dealer_can_create_vehicle_with_listing_trust_fields(self):
         self.authenticate()

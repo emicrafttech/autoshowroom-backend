@@ -13,6 +13,7 @@ def apply_feed_filters(queryset, params):
     filters = {
         "make": "make__iexact",
         "model": "model__iexact",
+        "trim": "trim__iexact",
         "bodyType": "body_type",
         "dealerSlug": "dealer__slug",
         "area": "location__area__iexact",

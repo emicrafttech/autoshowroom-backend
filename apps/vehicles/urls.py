@@ -1,7 +1,12 @@
 from django.urls import include, path
 from rest_framework.routers import SimpleRouter
 
-from .catalog_views import CatalogMakesView, CatalogModelsView
+from .catalog_views import (
+    CatalogMakesView,
+    CatalogModelsView,
+    CatalogTreeView,
+    CatalogTrimsView,
+)
 from .chat_views import (
     VehicleChatDetailView,
     VehicleChatListCreateView,
@@ -13,8 +18,10 @@ router = SimpleRouter(trailing_slash=False)
 router.register("vehicles", VehicleViewSet, basename="vehicle")
 
 catalog_urlpatterns = [
+    path("", CatalogTreeView.as_view(), name="catalog-tree"),
     path("makes", CatalogMakesView.as_view(), name="catalog-makes"),
     path("models", CatalogModelsView.as_view(), name="catalog-models"),
+    path("trims", CatalogTrimsView.as_view(), name="catalog-trims"),
 ]
 
 urlpatterns = [
