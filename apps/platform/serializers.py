@@ -252,13 +252,16 @@ class WatchlistEntrySerializer(serializers.ModelSerializer):
     def get_vehicleTitle(self, obj):
         if not obj.vehicle:
             return None
+        trim = (obj.vehicle.trim or "").strip()
+        if trim.lower() == "not specified":
+            trim = ""
         return " ".join(
             str(part)
             for part in [
                 obj.vehicle.year,
                 obj.vehicle.make,
                 obj.vehicle.model,
-                obj.vehicle.trim,
+                trim,
             ]
             if part
         )

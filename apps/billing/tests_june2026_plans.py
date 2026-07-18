@@ -255,9 +255,9 @@ class June2026PlansTests(TestCase):
         )
         self.assertIn(b"make,model,year", response.content)
         self.assertIn(b"description", response.content)
-        self.assertIn(b"videoLink1,videoLink2,videoLink3", response.content)
+        self.assertIn(b"videoLink1,videoLink2,videoLink3,videoLink4,videoLink5", response.content)
         self.assertIn(
-            b"imageLink1,imageLink2,imageLink3,imageLink4,imageLink5,imageLink6",
+            b"imageLink1,imageLink2,imageLink3,imageLink4,imageLink5,imageLink6,imageLink7,imageLink8,imageLink9,imageLink10",
             response.content,
         )
         xlsx = self.client.get("/v1/vehicles/bulk-upload/template?type=xlsx")
@@ -272,16 +272,22 @@ class June2026PlansTests(TestCase):
         headers = [cell.value for cell in sheet[1]]
         self.assertIn("description", headers)
         self.assertNotIn("notes", headers)
-        self.assertEqual(headers[-9:], [
+        self.assertEqual(headers[-15:], [
             "videoLink1",
             "videoLink2",
             "videoLink3",
+            "videoLink4",
+            "videoLink5",
             "imageLink1",
             "imageLink2",
             "imageLink3",
             "imageLink4",
             "imageLink5",
             "imageLink6",
+            "imageLink7",
+            "imageLink8",
+            "imageLink9",
+            "imageLink10",
         ])
         validations = list(sheet.data_validations.dataValidation)
         self.assertEqual(len(validations), 6)

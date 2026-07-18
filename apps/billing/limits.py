@@ -131,13 +131,21 @@ def get_analytics_tier(dealer) -> str:
     return plan.analytics_tier or BillingPlan.AnalyticsTier.BASIC
 
 
+MAX_VIDEOS_PER_VEHICLE = 5
+MAX_PHOTOS_PER_VEHICLE = 10
+
+
 def get_media_limits(dealer) -> dict:
     plan = get_dealer_plan(dealer)
     if not plan:
-        return {"videosPerVehicle": 5, "photosPerVehicle": 15, "maxClipSeconds": 120}
+        return {
+            "videosPerVehicle": MAX_VIDEOS_PER_VEHICLE,
+            "photosPerVehicle": MAX_PHOTOS_PER_VEHICLE,
+            "maxClipSeconds": 120,
+        }
     return {
-        "videosPerVehicle": plan.videos_per_vehicle,
-        "photosPerVehicle": plan.photos_per_vehicle,
+        "videosPerVehicle": min(plan.videos_per_vehicle, MAX_VIDEOS_PER_VEHICLE),
+        "photosPerVehicle": min(plan.photos_per_vehicle, MAX_PHOTOS_PER_VEHICLE),
         "maxClipSeconds": plan.max_clip_seconds,
     }
 

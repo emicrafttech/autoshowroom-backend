@@ -249,6 +249,7 @@ class VehicleSerializer(serializers.ModelSerializer):
         ]
         extra_kwargs = {
             "slug": {"required": False},
+            "trim": {"required": False, "allow_blank": True},
             "notes": {"required": False, "allow_null": True, "allow_blank": True},
             "vin": {"required": False, "allow_null": True, "allow_blank": True},
         }
@@ -322,6 +323,11 @@ class VehicleSerializer(serializers.ModelSerializer):
 
         if "make" in attrs:
             attrs["make"] = normalize_make(attrs["make"])
+        if "trim" in attrs:
+            trim = str(attrs.get("trim") or "").strip()
+            attrs["trim"] = "" if not trim or trim.lower() == "not specified" else trim
+        elif not self.instance:
+            attrs["trim"] = ""
         if "slug" not in attrs and not self.instance:
             base_slug = slugify(
                 f"{attrs.get('year')} {attrs.get('make')} {attrs.get('model')} {attrs.get('trim')}"

@@ -17,7 +17,7 @@ class BillingPlan(models.Model):
     staff_limit = models.PositiveIntegerField(null=True, blank=True, default=1)
     feed_priority = models.PositiveSmallIntegerField(default=0)
     videos_per_vehicle = models.PositiveSmallIntegerField(default=5)
-    photos_per_vehicle = models.PositiveSmallIntegerField(default=15)
+    photos_per_vehicle = models.PositiveSmallIntegerField(default=10)
     max_clip_seconds = models.PositiveIntegerField(default=120)
     featured_slots_per_month = models.PositiveSmallIntegerField(default=0)
     bulk_upload = models.BooleanField(default=False)

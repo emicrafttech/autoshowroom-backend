@@ -93,9 +93,9 @@ def sync_lead_from_vehicle_view(*, buyer, vehicle) -> Lead | None:
         source=Lead.Source.FEED,
     )
     if created:
-        from apps.notifications.services import notify_new_lead
+        from apps.notifications.services import notify_new_lead_from_vehicle_view
 
-        notify_new_lead(lead)
+        notify_new_lead_from_vehicle_view(lead)
     return lead
 
 

@@ -85,8 +85,9 @@ class LeadAutomationTests(TestCase):
             microsecond=0,
         )
 
-    @patch("apps.notifications.services.notify_new_lead")
-    def test_vehicle_view_creates_new_lead(self, notify_new_lead):
+    @patch("apps.notifications.services.send_new_lead_alert_email.delay")
+    @patch("apps.notifications.services.send_dealer_push_task.delay")
+    def test_vehicle_view_only_pushes_on_first_view(self, send_push, send_email):
         token = self.buyer_token()
         self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
 
@@ -97,7 +98,25 @@ class LeadAutomationTests(TestCase):
         self.assertEqual(lead.stage, Lead.Stage.NEW)
         self.assertEqual(lead.phone, self.buyer.phone)
         self.assertEqual(lead.vehicle_id, self.vehicle.id)
-        notify_new_lead.assert_called_once()
+        send_email.assert_not_called()
+        send_push.assert_called_once_with(
+            str(self.dealer.id),
+            title="New lead",
+            body="You received a new lead. Tap to review the details.",
+            data={
+                "kind": "new_lead",
+                "leadId": str(lead.id),
+            },
+        )
+
+        lead.stage = Lead.Stage.LOST
+        lead.save(update_fields=["stage", "updated_at"])
+        repeat_response = self.client.get(f"/v1/feed/vehicles/{self.vehicle.id}")
+
+        self.assertEqual(repeat_response.status_code, 200)
+        self.assertEqual(Lead.objects.count(), 1)
+        send_email.assert_not_called()
+        self.assertEqual(send_push.call_count, 1)
 
     @patch("apps.notifications.services.notify_new_lead")
     def test_chat_promotes_lead_to_contacted(self, notify_new_lead):

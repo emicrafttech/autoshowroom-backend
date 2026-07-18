@@ -61,8 +61,7 @@ def notify_review_issue(vehicle: Vehicle, issue: VehicleReviewIssue) -> list[Dea
     return created
 
 
-def notify_new_lead(lead: Lead) -> None:
-    send_new_lead_alert_email.delay(str(lead.id))
+def _send_new_lead_push(lead: Lead) -> None:
     send_dealer_push_task.delay(
         str(lead.dealer_id),
         title="New lead",
@@ -72,6 +71,15 @@ def notify_new_lead(lead: Lead) -> None:
             "leadId": str(lead.id),
         },
     )
+
+
+def notify_new_lead(lead: Lead) -> None:
+    send_new_lead_alert_email.delay(str(lead.id))
+    _send_new_lead_push(lead)
+
+
+def notify_new_lead_from_vehicle_view(lead: Lead) -> None:
+    _send_new_lead_push(lead)
 
 
 def notify_buyer_chat_message(message: BuyerMessage) -> None:

@@ -137,7 +137,7 @@ class Vehicle(models.Model):
     make = models.CharField(max_length=80)
     model = models.CharField(max_length=120)
     year = models.PositiveIntegerField()
-    trim = models.CharField(max_length=120)
+    trim = models.CharField(max_length=120, blank=True, default="")
     price_ngn = models.PositiveBigIntegerField()
     mileage_km = models.PositiveIntegerField()
     transmission = models.CharField(max_length=20, choices=Transmission.choices)

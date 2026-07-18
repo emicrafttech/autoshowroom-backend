@@ -25,11 +25,19 @@ def format_ngn(amount: int | float | None) -> str:
     return f"₦{value:,}"
 
 
+def _meaningful_trim(trim: str | None) -> str:
+    value = (trim or "").strip()
+    if not value or value.lower() == "not specified":
+        return ""
+    return value
+
+
 def format_vehicle_title(vehicle: Vehicle | None) -> str:
     if not vehicle:
         return "Vehicle"
-    trim = f" {vehicle.trim}" if getattr(vehicle, "trim", "") else ""
-    return f"{vehicle.year} {vehicle.make} {vehicle.model}{trim}".strip()
+    trim = _meaningful_trim(getattr(vehicle, "trim", ""))
+    trim_part = f" {trim}" if trim else ""
+    return f"{vehicle.year} {vehicle.make} {vehicle.model}{trim_part}".strip()
 
 
 def format_vehicle_short_title(vehicle: Vehicle | None) -> str:

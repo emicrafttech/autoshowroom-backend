@@ -89,10 +89,11 @@ class FeedVehicleDetailView(EnvelopeMixin, RetrieveAPIView):
                 buyer = None
             if buyer:
                 vehicle = self.get_object()
-                record_vehicle_visit(buyer=buyer, vehicle=vehicle)
-                from apps.leads.services import sync_lead_from_vehicle_view
+                _, is_first_view = record_vehicle_visit(buyer=buyer, vehicle=vehicle)
+                if is_first_view:
+                    from apps.leads.services import sync_lead_from_vehicle_view
 
-                sync_lead_from_vehicle_view(buyer=buyer, vehicle=vehicle)
+                    sync_lead_from_vehicle_view(buyer=buyer, vehicle=vehicle)
         return response
 
 
@@ -189,7 +190,7 @@ class FeedDealerDetailView(EnvelopeMixin, RetrieveAPIView):
         if not deltas:
             return None
         deltas.sort()
-        return int(deltas[len(deltas) // 2])
+        return max(1, round(deltas[len(deltas) // 2]))
 
 
 class FeedLocationsView(EnvelopeMixin, ListAPIView):

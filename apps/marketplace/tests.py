@@ -7,7 +7,14 @@ from rest_framework.test import APIClient
 from apps.accounts.models import StaffUser
 from apps.billing.models import BillingPlan, Invoice, Subscription
 from apps.bookings.models import Appointment, Booking
-from apps.buyers.models import BuyerOtp, SavedVehicle, VehicleVisit
+from apps.buyers.models import (
+    Buyer,
+    BuyerConversation,
+    BuyerMessage,
+    BuyerOtp,
+    SavedVehicle,
+    VehicleVisit,
+)
 from apps.dealers.models import Dealer, DealerLocation
 from apps.leads.models import Lead, NotifyMeRequest
 from apps.platform.models import AuditLog, ContentReport, DealerSanction
@@ -209,6 +216,34 @@ class RemainingRoadmapTests(TestCase):
         self.assertIn(str(reserved.id), vehicle_ids)
         statuses = {item["id"]: item["status"] for item in data["vehicles"]}
         self.assertEqual(statuses[str(reserved.id)], Vehicle.Status.RESERVED)
+
+    def test_dealer_profile_rounds_sub_minute_reply_time_to_one_minute(self):
+        buyer = Buyer.objects.create(phone="+2348090000001", name="Ada Buyer")
+        conversation = BuyerConversation.objects.create(
+            buyer=buyer,
+            dealer=self.dealer,
+            vehicle=self.vehicle,
+        )
+        buyer_message = BuyerMessage.objects.create(
+            conversation=conversation,
+            sender_type=BuyerMessage.SenderType.BUYER,
+            body="Is this available?",
+        )
+        dealer_message = BuyerMessage.objects.create(
+            conversation=conversation,
+            sender_type=BuyerMessage.SenderType.DEALER,
+            body="Yes, it is.",
+        )
+        sent_at = timezone.now() - timedelta(minutes=1)
+        BuyerMessage.objects.filter(pk=buyer_message.pk).update(created_at=sent_at)
+        BuyerMessage.objects.filter(pk=dealer_message.pk).update(
+            created_at=sent_at + timedelta(seconds=20),
+        )
+
+        response = self.client.get(f"/v1/feed/dealers/{self.dealer.slug}")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["data"]["responseTimeMins"], 1)
 
     def test_buyer_saved_vehicle_and_visit_tracking(self):
         token = self.buyer_token()

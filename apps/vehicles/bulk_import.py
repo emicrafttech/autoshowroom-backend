@@ -42,12 +42,18 @@ BULK_UPLOAD_COLUMNS = [
     "videoLink1",
     "videoLink2",
     "videoLink3",
+    "videoLink4",
+    "videoLink5",
     "imageLink1",
     "imageLink2",
     "imageLink3",
     "imageLink4",
     "imageLink5",
     "imageLink6",
+    "imageLink7",
+    "imageLink8",
+    "imageLink9",
+    "imageLink10",
 ]
 
 COLUMN_ALIASES = {
@@ -72,7 +78,7 @@ COLUMN_ALIASES = {
             f"video_link_{index}",
             f"video_url_{index}",
         }
-        for index in range(1, 4)
+        for index in range(1, 6)
     },
     **{
         f"imageLink{index}": {
@@ -82,7 +88,7 @@ COLUMN_ALIASES = {
             f"photo_link_{index}",
             f"photo_url_{index}",
         }
-        for index in range(1, 7)
+        for index in range(1, 11)
     },
 }
 
@@ -124,12 +130,18 @@ SAMPLE_ROWS = [
         "videoLink1": "https://example.com/camry-walkaround-1.mp4",
         "videoLink2": "https://example.com/camry-walkaround-2.mp4",
         "videoLink3": "https://example.com/camry-walkaround-3.mp4",
+        "videoLink4": "",
+        "videoLink5": "",
         "imageLink1": "https://example.com/camry-front.jpg",
         "imageLink2": "https://example.com/camry-rear.jpg",
         "imageLink3": "https://example.com/camry-left.jpg",
         "imageLink4": "https://example.com/camry-right.jpg",
         "imageLink5": "https://example.com/camry-interior.jpg",
         "imageLink6": "https://example.com/camry-dashboard.jpg",
+        "imageLink7": "",
+        "imageLink8": "",
+        "imageLink9": "",
+        "imageLink10": "",
     },
     {
         "make": "Lexus",
@@ -150,12 +162,18 @@ SAMPLE_ROWS = [
         "videoLink1": "",
         "videoLink2": "",
         "videoLink3": "",
+        "videoLink4": "",
+        "videoLink5": "",
         "imageLink1": "https://example.com/lexus-rx-front.jpg",
         "imageLink2": "",
         "imageLink3": "",
         "imageLink4": "",
         "imageLink5": "",
         "imageLink6": "",
+        "imageLink7": "",
+        "imageLink8": "",
+        "imageLink9": "",
+        "imageLink10": "",
     },
 ]
 
@@ -213,8 +231,8 @@ def _media_links_from_row(
     validate_url = URLValidator(schemes=["http", "https"])
     links: list[dict[str, str]] = []
     for kind, field_prefix, count in (
-        (VehicleMedia.Kind.VIDEO, "videoLink", 3),
-        (VehicleMedia.Kind.PHOTO, "imageLink", 6),
+        (VehicleMedia.Kind.VIDEO, "videoLink", 5),
+        (VehicleMedia.Kind.PHOTO, "imageLink", 10),
     ):
         for index in range(1, count + 1):
             field = f"{field_prefix}{index}"
