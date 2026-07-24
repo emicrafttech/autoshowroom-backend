@@ -6,7 +6,7 @@ from .models import BillingDispute, BillingPlan, EarlyPlanTermination, Invoice, 
 from .plan_catalogue import vat_breakdown
 
 
-class BillingPlanSerializer(serializers.ModelSerializer):
+class PublicBillingPlanSerializer(serializers.ModelSerializer):
     priceNgn = serializers.IntegerField(source="price_ngn", required=False)
     priceYearlyNgn = serializers.IntegerField(source="price_yearly_ngn", required=False)
     listingLimit = serializers.IntegerField(source="listing_limit", required=False, allow_null=True)
@@ -20,10 +20,7 @@ class BillingPlanSerializer(serializers.ModelSerializer):
     followUpReminders = serializers.BooleanField(source="follow_up_reminders", required=False)
     analyticsTier = serializers.CharField(source="analytics_tier", required=False)
     isActive = serializers.BooleanField(source="is_active", required=False)
-    activeDealerCount = serializers.SerializerMethodField()
     entitlements = serializers.SerializerMethodField()
-    createdAt = serializers.DateTimeField(source="created_at", read_only=True)
-    updatedAt = serializers.DateTimeField(source="updated_at", read_only=True)
 
     class Meta:
         model = BillingPlan
@@ -43,22 +40,9 @@ class BillingPlanSerializer(serializers.ModelSerializer):
             "followUpReminders",
             "analyticsTier",
             "isActive",
-            "activeDealerCount",
             "features",
             "entitlements",
-            "createdAt",
-            "updatedAt",
         ]
-
-    def get_activeDealerCount(self, obj):
-        active_subscription_dealer_ids = set(
-            obj.subscriptions.filter(status=Subscription.Status.ACTIVE).values_list(
-                "dealer_id",
-                flat=True,
-            )
-        )
-        plan_dealer_ids = set(Dealer.objects.filter(plan_id=obj.id).values_list("id", flat=True))
-        return len(active_subscription_dealer_ids | plan_dealer_ids)
 
     def get_entitlements(self, obj):
         return {
@@ -74,9 +58,33 @@ class BillingPlanSerializer(serializers.ModelSerializer):
         }
 
 
+class BillingPlanSerializer(PublicBillingPlanSerializer):
+    activeDealerCount = serializers.SerializerMethodField()
+    createdAt = serializers.DateTimeField(source="created_at", read_only=True)
+    updatedAt = serializers.DateTimeField(source="updated_at", read_only=True)
+
+    class Meta(PublicBillingPlanSerializer.Meta):
+        fields = [
+            *PublicBillingPlanSerializer.Meta.fields,
+            "activeDealerCount",
+            "createdAt",
+            "updatedAt",
+        ]
+
+    def get_activeDealerCount(self, obj):
+        active_subscription_dealer_ids = set(
+            obj.subscriptions.filter(status=Subscription.Status.ACTIVE).values_list(
+                "dealer_id",
+                flat=True,
+            )
+        )
+        plan_dealer_ids = set(Dealer.objects.filter(plan_id=obj.id).values_list("id", flat=True))
+        return len(active_subscription_dealer_ids | plan_dealer_ids)
+
+
 class SubscriptionSerializer(serializers.ModelSerializer):
-    plan = BillingPlanSerializer(read_only=True)
-    pendingPlan = BillingPlanSerializer(source="pending_plan", read_only=True)
+    plan = PublicBillingPlanSerializer(read_only=True)
+    pendingPlan = PublicBillingPlanSerializer(source="pending_plan", read_only=True)
     dealerId = serializers.UUIDField(source="dealer_id", read_only=True)
     dealerName = serializers.CharField(source="dealer.name", read_only=True)
     planName = serializers.CharField(source="plan.name", read_only=True)
@@ -109,6 +117,11 @@ class SubscriptionSerializer(serializers.ModelSerializer):
         if obj.billing_interval == Subscription.BillingInterval.YEARLY:
             return obj.plan.price_yearly_ngn
         return obj.plan.price_ngn
+
+
+class PlatformSubscriptionSerializer(SubscriptionSerializer):
+    plan = BillingPlanSerializer(read_only=True)
+    pendingPlan = BillingPlanSerializer(source="pending_plan", read_only=True)
 
 
 class InvoiceSerializer(serializers.ModelSerializer):

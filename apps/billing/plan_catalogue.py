@@ -2,8 +2,11 @@
 
 VAT_RATE = 0.075
 FOUNDING_TRIAL_DAYS = 90
+GLOBAL_VIDEOS_PER_VEHICLE = 8
+GLOBAL_PHOTOS_PER_VEHICLE = 30
+GLOBAL_MAX_CLIP_SECONDS = 180
 
-# null listing/staff = unlimited; null stand = unlimited (stands are not plan-gated)
+# null listing/staff = unlimited; stands are not plan-gated
 PLAN_MATRIX = [
     {
         "id": "starter",
@@ -14,9 +17,9 @@ PLAN_MATRIX = [
         "stand_limit": None,
         "staff_limit": 1,
         "feed_priority": 0,
-        "videos_per_vehicle": 5,
-        "photos_per_vehicle": 10,
-        "max_clip_seconds": 120,
+        "videos_per_vehicle": GLOBAL_VIDEOS_PER_VEHICLE,
+        "photos_per_vehicle": GLOBAL_PHOTOS_PER_VEHICLE,
+        "max_clip_seconds": GLOBAL_MAX_CLIP_SECONDS,
         "featured_slots_per_month": 0,
         "bulk_upload": False,
         "follow_up_reminders": False,
@@ -40,9 +43,9 @@ PLAN_MATRIX = [
         "stand_limit": None,
         "staff_limit": 5,
         "feed_priority": 0,
-        "videos_per_vehicle": 5,
-        "photos_per_vehicle": 10,
-        "max_clip_seconds": 120,
+        "videos_per_vehicle": GLOBAL_VIDEOS_PER_VEHICLE,
+        "photos_per_vehicle": GLOBAL_PHOTOS_PER_VEHICLE,
+        "max_clip_seconds": GLOBAL_MAX_CLIP_SECONDS,
         "featured_slots_per_month": 3,
         "bulk_upload": True,
         "follow_up_reminders": True,
@@ -70,9 +73,9 @@ PLAN_MATRIX = [
         "stand_limit": None,
         "staff_limit": None,
         "feed_priority": 0,
-        "videos_per_vehicle": 5,
-        "photos_per_vehicle": 10,
-        "max_clip_seconds": 180,
+        "videos_per_vehicle": GLOBAL_VIDEOS_PER_VEHICLE,
+        "photos_per_vehicle": GLOBAL_PHOTOS_PER_VEHICLE,
+        "max_clip_seconds": GLOBAL_MAX_CLIP_SECONDS,
         "featured_slots_per_month": 15,
         "bulk_upload": True,
         "follow_up_reminders": True,
@@ -92,6 +95,7 @@ PLAN_MATRIX = [
             "monthly_report",
             "video_production_support",
             "dedicated_account_manager",
+            "priority_support",
         ],
     },
 ]

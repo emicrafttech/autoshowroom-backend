@@ -50,6 +50,7 @@ from apps.billing.serializers import (
     DowngradeRequestSerializer,
     InvoiceSerializer,
     PaystackWebhookSerializer,
+    PublicBillingPlanSerializer,
     SubscriptionSerializer,
 )
 from apps.bookings.views import (
@@ -941,7 +942,7 @@ BillingPlansView.get = extend_schema(
     tags=["Billing"],
     summary="List billing plans",
     description="Returns active subscription plans available to dealers.",
-    responses={200: BillingPlanSerializer(many=True)},
+    responses={200: PublicBillingPlanSerializer(many=True)},
 )(BillingPlansView.get)
 BillingSummaryView.get = extend_schema(tags=["Billing"], summary="Get dealer billing summary", responses={200: billing_summary_response})(BillingSummaryView.get)
 InvoiceListView.get = extend_schema(

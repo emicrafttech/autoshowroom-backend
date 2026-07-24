@@ -18,6 +18,10 @@ from rest_framework.exceptions import ValidationError
 from rest_framework.serializers import ValidationError as SerializerValidationError
 
 from apps.billing.limits import active_listing_count, get_listing_limit, get_media_limits
+from apps.billing.plan_catalogue import (
+    GLOBAL_PHOTOS_PER_VEHICLE,
+    GLOBAL_VIDEOS_PER_VEHICLE,
+)
 from apps.dealers.models import DealerLocation
 
 from .models import Vehicle, VehicleMedia
@@ -39,21 +43,8 @@ BULK_UPLOAD_COLUMNS = [
     "negotiable",
     "description",
     "vin",
-    "videoLink1",
-    "videoLink2",
-    "videoLink3",
-    "videoLink4",
-    "videoLink5",
-    "imageLink1",
-    "imageLink2",
-    "imageLink3",
-    "imageLink4",
-    "imageLink5",
-    "imageLink6",
-    "imageLink7",
-    "imageLink8",
-    "imageLink9",
-    "imageLink10",
+    *[f"videoLink{index}" for index in range(1, GLOBAL_VIDEOS_PER_VEHICLE + 1)],
+    *[f"imageLink{index}" for index in range(1, GLOBAL_PHOTOS_PER_VEHICLE + 1)],
 ]
 
 COLUMN_ALIASES = {
@@ -78,7 +69,7 @@ COLUMN_ALIASES = {
             f"video_link_{index}",
             f"video_url_{index}",
         }
-        for index in range(1, 6)
+        for index in range(1, GLOBAL_VIDEOS_PER_VEHICLE + 1)
     },
     **{
         f"imageLink{index}": {
@@ -88,7 +79,7 @@ COLUMN_ALIASES = {
             f"photo_link_{index}",
             f"photo_url_{index}",
         }
-        for index in range(1, 11)
+        for index in range(1, GLOBAL_PHOTOS_PER_VEHICLE + 1)
     },
 }
 
@@ -231,8 +222,8 @@ def _media_links_from_row(
     validate_url = URLValidator(schemes=["http", "https"])
     links: list[dict[str, str]] = []
     for kind, field_prefix, count in (
-        (VehicleMedia.Kind.VIDEO, "videoLink", 5),
-        (VehicleMedia.Kind.PHOTO, "imageLink", 10),
+        (VehicleMedia.Kind.VIDEO, "videoLink", GLOBAL_VIDEOS_PER_VEHICLE),
+        (VehicleMedia.Kind.PHOTO, "imageLink", GLOBAL_PHOTOS_PER_VEHICLE),
     ):
         for index in range(1, count + 1):
             field = f"{field_prefix}{index}"

@@ -71,6 +71,8 @@ from .serializers import (
     EarlyPlanTerminationSerializer,
     InvoiceSerializer,
     PaymentMethodCompleteSerializer,
+    PlatformSubscriptionSerializer,
+    PublicBillingPlanSerializer,
     RefundSerializer,
     SubscriptionSerializer,
 )
@@ -131,7 +133,7 @@ def _invoice_pdf(invoice: Invoice) -> BytesIO:
 
 class BillingPlansView(EnvelopeMixin, generics.ListAPIView):
     permission_classes = [AllowAny]
-    serializer_class = BillingPlanSerializer
+    serializer_class = PublicBillingPlanSerializer
 
     def get(self, request, *args, **kwargs):
         return super().get(request, *args, **kwargs)
@@ -501,7 +503,7 @@ class PlatformSubscriptionViewSet(EnvelopeMixin, viewsets.ReadOnlyModelViewSet):
     permission_classes = [HasPlatformCapability]
     read_capability = "billing.read"
     write_capability = "billing.write"
-    serializer_class = SubscriptionSerializer
+    serializer_class = PlatformSubscriptionSerializer
     queryset = Subscription.objects.select_related("dealer", "plan")
 
     @action(detail=True, methods=["post"], url_path="refund")

@@ -83,6 +83,8 @@ class DealerLocationTests(TestCase):
         self.assertEqual(response.json()["data"]["locations"][0]["listingCount"], 1)
 
     def test_dealer_insights_returns_sales_sources_and_inventory_groups(self):
+        self.dealer.plan_id = "growth"
+        self.dealer.save(update_fields=["plan_id", "updated_at"])
         Vehicle.objects.create(
             dealer=self.dealer,
             location=self.location,

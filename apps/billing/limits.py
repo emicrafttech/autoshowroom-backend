@@ -6,6 +6,11 @@ from django.utils import timezone
 from apps.vehicles.models import Vehicle
 
 from .models import BillingPlan, Subscription
+from .plan_catalogue import (
+    GLOBAL_MAX_CLIP_SECONDS,
+    GLOBAL_PHOTOS_PER_VEHICLE,
+    GLOBAL_VIDEOS_PER_VEHICLE,
+)
 
 
 def get_dealer_plan(dealer) -> BillingPlan | None:
@@ -33,9 +38,8 @@ def get_listing_limit(dealer) -> int | None:
     return plan.listing_limit
 
 
-def get_stand_limit(dealer) -> int | None:
-    """Stands are not plan-gated; always unlimited."""
-    return None
+def get_stand_limit(dealer) -> int:
+    return 1
 
 
 def get_staff_limit(dealer) -> int | None:
@@ -50,7 +54,7 @@ def active_stand_count(dealer) -> int:
 
 
 def can_add_stand(dealer) -> bool:
-    return True
+    return active_stand_count(dealer) < get_stand_limit(dealer)
 
 
 def active_listing_count(dealer) -> int:
@@ -131,22 +135,11 @@ def get_analytics_tier(dealer) -> str:
     return plan.analytics_tier or BillingPlan.AnalyticsTier.BASIC
 
 
-MAX_VIDEOS_PER_VEHICLE = 5
-MAX_PHOTOS_PER_VEHICLE = 10
-
-
 def get_media_limits(dealer) -> dict:
-    plan = get_dealer_plan(dealer)
-    if not plan:
-        return {
-            "videosPerVehicle": MAX_VIDEOS_PER_VEHICLE,
-            "photosPerVehicle": MAX_PHOTOS_PER_VEHICLE,
-            "maxClipSeconds": 120,
-        }
     return {
-        "videosPerVehicle": min(plan.videos_per_vehicle, MAX_VIDEOS_PER_VEHICLE),
-        "photosPerVehicle": min(plan.photos_per_vehicle, MAX_PHOTOS_PER_VEHICLE),
-        "maxClipSeconds": plan.max_clip_seconds,
+        "videosPerVehicle": GLOBAL_VIDEOS_PER_VEHICLE,
+        "photosPerVehicle": GLOBAL_PHOTOS_PER_VEHICLE,
+        "maxClipSeconds": GLOBAL_MAX_CLIP_SECONDS,
     }
 
 
@@ -179,6 +172,28 @@ def soft_inactivate_excess_listings(dealer) -> int:
             ]
         )
     return len(to_hide)
+
+
+def soft_deactivate_excess_staff(dealer) -> int:
+    limit = get_staff_limit(dealer)
+    if limit is None:
+        return 0
+    active_users = list(dealer.staff_users.filter(is_active=True))
+    active_users.sort(
+        key=lambda user: (
+            user.role != "owner",
+            user.created_at,
+            str(user.id),
+        )
+    )
+    to_deactivate = active_users[limit:]
+    if not to_deactivate:
+        return 0
+    dealer.staff_users.filter(id__in=[user.id for user in to_deactivate]).update(
+        is_active=False,
+        updated_at=timezone.now(),
+    )
+    return len(to_deactivate)
 
 
 def feature_vehicle(dealer, vehicle: Vehicle, *, days: int = 30) -> Vehicle:

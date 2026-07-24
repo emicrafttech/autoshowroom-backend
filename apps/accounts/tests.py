@@ -500,7 +500,7 @@ class AuthDealerFoundationTests(TestCase):
         self.user.refresh_from_db()
         self.assertEqual(self.user.preferred_location_id, self.second_location.id)
 
-    def test_dealer_profile_context_and_location_crud(self):
+    def test_dealer_profile_context_and_single_location_update(self):
         self.authenticate()
 
         profile_response = self.client.get("/v1/dealers/me")
@@ -531,16 +531,10 @@ class AuthDealerFoundationTests(TestCase):
             {"name": "Maitama Stand", "districtSlug": "maitama"},
             format="json",
         )
-        self.assertEqual(create_response.status_code, 201)
-        created_id = create_response.json()["data"]["id"]
-        self.assertEqual(
-            create_response.json()["data"]["premisesVerificationStatus"],
-            "not_submitted",
-        )
-        self.assertEqual(create_response.json()["data"]["evidenceFiles"], [])
+        self.assertEqual(create_response.status_code, 405)
 
         patch_response = self.client.patch(
-            f"/v1/dealers/me/locations/{created_id}",
+            f"/v1/dealers/me/locations/{self.primary_location.id}",
             {
                 "area": "Maitama District",
                 "evidenceFiles": ["https://cdn.example.com/maitama-stand.jpg"],
@@ -548,18 +542,17 @@ class AuthDealerFoundationTests(TestCase):
             format="json",
         )
         self.assertEqual(patch_response.status_code, 200)
-        self.assertEqual(patch_response.json()["data"]["area"], "maitama")
+        self.assertEqual(patch_response.json()["data"]["area"], "Wuse")
         self.assertEqual(patch_response.json()["data"]["pendingChanges"]["area"], "Maitama District")
         self.assertEqual(patch_response.json()["data"]["premisesVerificationStatus"], "pending")
 
         set_primary_response = self.client.post(
-            f"/v1/dealers/me/locations/{created_id}/set-primary",
+            f"/v1/dealers/me/locations/{self.primary_location.id}/set-primary",
         )
-        self.assertEqual(set_primary_response.status_code, 200)
-        self.assertTrue(set_primary_response.json()["data"]["isPrimary"])
+        self.assertEqual(set_primary_response.status_code, 404)
 
-        delete_response = self.client.delete(f"/v1/dealers/me/locations/{created_id}")
-        self.assertEqual(delete_response.status_code, 204)
+        delete_response = self.client.delete(f"/v1/dealers/me/locations/{self.primary_location.id}")
+        self.assertEqual(delete_response.status_code, 405)
 
     def test_email_verification_send_and_verify(self):
         self.authenticate()
@@ -750,7 +743,7 @@ class AuthDealerFoundationTests(TestCase):
         self.assertEqual(self.dealer.operational_status, Dealer.OperationalStatus.ACTIVE)
         self.assertIsNone(self.dealer.suspended_reason)
 
-    def test_dealer_location_create_is_not_plan_gated(self):
+    def test_dealer_location_create_is_not_exposed(self):
         self.authenticate()
 
         response = self.client.post(
@@ -759,7 +752,7 @@ class AuthDealerFoundationTests(TestCase):
             format="json",
         )
 
-        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.status_code, 405)
 
     def test_dealer_location_routes_are_tenant_scoped(self):
         other_dealer = Dealer.objects.create(

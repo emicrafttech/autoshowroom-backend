@@ -53,7 +53,7 @@ def compute_checkout_quote(
     current_price_ngn = plan_price_for_interval(current_plan, current_interval) if current_plan else 0
     target_price_ngn = plan_price_for_interval(target_plan, billing_interval)
 
-    if dealer_eligible_for_founding_trial(dealer):
+    if target_plan.id == "starter" and dealer_eligible_for_founding_trial(dealer):
         return {
             "amount_ngn": 0,
             "amount_kobo": 0,
@@ -104,7 +104,7 @@ def compute_checkout_quote(
 
 
 def apply_due_plan_changes(dealer) -> bool:
-    from .limits import soft_inactivate_excess_listings
+    from .limits import soft_deactivate_excess_staff, soft_inactivate_excess_listings
 
     subscription = get_active_subscription(dealer)
     if not subscription or not subscription.pending_plan_id or not subscription.pending_plan_effective_at:
@@ -126,6 +126,7 @@ def apply_due_plan_changes(dealer) -> bool:
     dealer.plan_id = subscription.plan_id
     dealer.save(update_fields=["plan_id", "updated_at"])
     soft_inactivate_excess_listings(dealer)
+    soft_deactivate_excess_staff(dealer)
     return True
 
 

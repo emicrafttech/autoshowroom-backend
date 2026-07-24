@@ -2,7 +2,7 @@ from django.db import transaction
 from django.db.models import Count, Sum
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
-from rest_framework import status, viewsets
+from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.response import Response
@@ -197,7 +197,13 @@ class DealerMessageInboxView(EnvelopeMixin, APIView):
         return Response(DealerMessageThreadSerializer(thread).data, status=status.HTTP_201_CREATED)
 
 
-class DealerLocationViewSet(EnvelopeMixin, viewsets.ModelViewSet):
+class DealerLocationViewSet(
+    EnvelopeMixin,
+    mixins.ListModelMixin,
+    mixins.RetrieveModelMixin,
+    mixins.UpdateModelMixin,
+    viewsets.GenericViewSet,
+):
     serializer_class = DealerLocationSerializer
     permission_classes = [IsActiveDealerStaff]
     http_method_names = ["get", "post", "patch", "delete", "head", "options"]
@@ -213,24 +219,6 @@ class DealerLocationViewSet(EnvelopeMixin, viewsets.ModelViewSet):
 
     def get_queryset(self):
         return DealerLocation.objects.filter(dealer_id=self.request.user.dealer_id)
-
-    def perform_create(self, serializer):
-        dealer = get_object_or_404(Dealer, id=self.request.user.dealer_id)
-        is_first_location = not dealer.locations.exists()
-        evidence_files = serializer.validated_data.get("evidence_files", [])
-        has_kyd_premises_proof = DealerVerificationDocument.objects.filter(
-            dealer=dealer,
-            kind=DealerVerificationDocument.Kind.PREMISES,
-        ).exists()
-        serializer.save(
-            dealer=dealer,
-            is_primary=is_first_location,
-            premises_verification_status=(
-                DealerLocation.PremisesVerificationStatus.PENDING
-                if evidence_files or (is_first_location and has_kyd_premises_proof)
-                else DealerLocation.PremisesVerificationStatus.NOT_SUBMITTED
-            ),
-        )
 
     def _json_value(self, value):
         return str(value) if hasattr(value, "as_tuple") else value
@@ -292,31 +280,6 @@ class DealerLocationViewSet(EnvelopeMixin, viewsets.ModelViewSet):
                 dealer=location.dealer,
                 kind=DealerVerificationDocument.Kind.PREMISES,
             ).exists()
-        )
-
-    def perform_destroy(self, instance):
-        if instance.is_primary and self.get_queryset().exclude(id=instance.id).exists():
-            replacement = self.get_queryset().exclude(id=instance.id).first()
-            with transaction.atomic():
-                instance.delete()
-                replacement.is_primary = True
-                replacement.save(update_fields=["is_primary", "updated_at"])
-            return
-        instance.delete()
-
-    @action(detail=True, methods=["post"], url_path="set-primary")
-    def set_primary(self, request, pk=None):
-        location = self.get_object()
-        with transaction.atomic():
-            self.get_queryset().update(is_primary=False)
-            location.is_primary = True
-            location.save(update_fields=["is_primary", "updated_at"])
-            request.user.preferred_location = location
-            request.user.save(update_fields=["preferred_location", "updated_at"])
-
-        return Response(
-            DealerLocationSerializer(location).data,
-            status=status.HTTP_200_OK,
         )
 
     @action(detail=True, methods=["post"], url_path="request-verification")
